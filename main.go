@@ -18,9 +18,9 @@ var (
 )
 
 var options struct {
-	Signer  signer.Options  `group:"Vault SSH key signing options"`
-	OpenSSH openssh.Options `group:"OpenSSH ssh(1) options" hidden:"yes"`
-	Version func()          `long:"version" description:"show version"`
+	Signer  signer.Options  `group:"Vault SSH key signing Options"`
+	OpenSSH openssh.Options `group:"OpenSSH ssh(1) Options" hidden:"yes"`
+	Version func()          `long:"version" group:"Help" description:"show version"`
 }
 
 func main() {
@@ -28,12 +28,19 @@ func main() {
 		fmt.Printf("vault-ssh-client v%s (%s), %s\n", version, commit, date)
 		os.Exit(0)
 	}
-	parser := flags.NewParser(&options, flags.HelpFlag|flags.PassDoubleDash)
+	parser := flags.NewParser(&options, flags.Default)
+	parser.Usage = "[options] destination [command]"
 	if _, err := parser.ParseArgs(os.Args[1:]); err != nil {
-		log.Fatal("error parsing arguments: ", err)
+		if flagsErr, ok := err.(*flags.Error); ok && flagsErr.Type == flags.ErrHelp {
+			os.Exit(0)
+		} else {
+			fmt.Println(err)
+			os.Exit(1)
+		}
 	}
 
-	sshClient, unparsedArgs := openssh.ParseArgs(os.Args[1:])
+	vaultClient, unparsedArgs := signer.ParseArgs(os.Args[1:])
+	sshClient, _ := openssh.ParseArgs(unparsedArgs)
 
 	if sshClient.Options.LoginName == "" {
 		currentUser, _ := user.Current()
@@ -43,7 +50,6 @@ func main() {
 	controlConnection := sshClient.ControlConnection()
 
 	if !controlConnection {
-		vaultClient, _ := signer.ParseArgs(unparsedArgs)
 		if !vaultClient.Options.PTY && len(sshClient.Options.ForcePTY) > 0 {
 			vaultClient.Options.PTY = true
 		}
