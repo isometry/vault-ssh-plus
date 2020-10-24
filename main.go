@@ -23,10 +23,8 @@ type options struct {
 	TTL            uint   `long:"ttl" default:"300" env:"VAULT_SSH_TTL" description:"Vault SSH Certificate TTL"`
 	PortForwarding bool   `long:"port-forwarding" env:"VAULT_SSH_PORT_FORWARDING" description:"Force permit-port-forwarding extension"`
 	PTY            bool   `long:"pty" env:"VAULT_SSH_PTY" description:"Force permit-pty extension"`
-	// TODO: make private key optional to support PKCS#11 keys
-	PrivateKey string `long:"key" default:"~/.ssh/id_rsa" env:"VAULT_SSH_PRIVATE_KEY" description:"OpenSSH Private RSA Key"`
-	PublicKey  string `long:"pub" default:"~/.ssh/id_rsa.pub" env:"VAULT_SSH_PUBLIC_KEY" description:"OpenSSH Public RSA Key to sign"`
-	Exec       bool   `long:"exec" env:"VAULT_SSH_EXEC" description:"Call ssh via execve(2)"`
+	PublicKey      string `short:"P" long:"public-key" default:"~/.ssh/id_rsa.pub" env:"VAULT_SSH_PUBLIC_KEY" description:"OpenSSH Public RSA Key to sign"`
+	Exec           bool   `long:"exec" env:"VAULT_SSH_EXEC" description:"Call ssh via execve(2)"`
 }
 
 // getToken uses the standard vault client binary to retrieve the "current" default token, avoiding reimplementation of token_helper, etc.
@@ -57,24 +55,22 @@ func main() {
 		sshClient.Options.LoginName = currentUser.Username
 	}
 
-	if strings.HasPrefix(opts.PrivateKey, "~/") {
-		opts.PrivateKey = filepath.Join(homeDir, opts.PrivateKey[2:])
-	}
-
 	if strings.HasPrefix(opts.PublicKey, "~/") {
 		opts.PublicKey = filepath.Join(homeDir, opts.PublicKey[2:])
 	}
+
+	if _, err := os.Stat(opts.PublicKey); os.IsNotExist(err) {
+		log.Fatal("public key does not exist: ", err)
+	}
+
+	// TODO: further validate public key
 
 	controlConnection := sshClient.ControlConnection()
 
 	if !controlConnection {
 		signedPublicKey := getSignedKeyFile(opts, sshClient.Options)
 		defer os.Remove(signedPublicKey)
-		sshClient.PrependArgs([]string{
-			"-o", "IdentitiesOnly=yes",
-			"-i", signedPublicKey,
-			"-i", opts.PrivateKey,
-		})
+		sshClient.PrependArgs([]string{"-i", signedPublicKey})
 	}
 
 	log.Printf("%v %v\n", sshClient.Args, controlConnection)
@@ -141,8 +137,8 @@ func getSignedKeyFile(opts options, sshOpts openssh.Options) string {
 		log.Fatal("failed to sign key: ", err)
 	}
 
-	signedPublicKeyFileNameTemplate := fmt.Sprintf("%s_%s-cert.pub.*", filepath.Base(opts.PrivateKey), sshOpts.LoginName)
-	signedPublicKeyFile, err := ioutil.TempFile(filepath.Dir(opts.PrivateKey), signedPublicKeyFileNameTemplate)
+	signedPublicKeyFileNameTemplate := fmt.Sprintf("signed_%s@path=%s:role=%s:principal=%s.*", filepath.Base(opts.PublicKey), opts.Path, opts.Role, sshOpts.LoginName)
+	signedPublicKeyFile, err := ioutil.TempFile(filepath.Dir(opts.PublicKey), signedPublicKeyFileNameTemplate)
 	if err != nil {
 		log.Fatal("failed to create temporary public key file: ", err)
 	}
