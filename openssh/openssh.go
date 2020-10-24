@@ -63,6 +63,7 @@ type Options struct {
 	TrustedX11Forwarding   bool       `short:"Y" description:"Enable trusted X11 forwarding"`
 	Syslog                 bool       `short:"y" description:"Log to syslog(3)"`
 	Positional             Positional `positional-args:"yes"`
+	Exec                   bool       `long:"exec" env:"VAULT_SSH_EXEC" description:"Call ssh via execve(2)"`
 	Host                   string
 }
 
@@ -73,12 +74,14 @@ type Positional struct {
 }
 
 // ParseArgs parses arguments intended for https://man.openbsd.org/ssh.1
-func ParseArgs(args []string) Client {
+func ParseArgs(args []string) (Client, []string) {
 	var o Client
 
 	o.Args = args
 
-	_, err := flags.ParseArgs(&o.Options, args)
+	parser := flags.NewParser(&o.Options, flags.PassDoubleDash|flags.IgnoreUnknown)
+	unparsedArgs, err := parser.ParseArgs(args)
+
 	if err != nil {
 		log.Fatal("error parsing ssh args: ", err)
 	}
@@ -98,7 +101,7 @@ func ParseArgs(args []string) Client {
 		o.Options.Port = uint16(port)
 	}
 	o.Options.Host = uri.Hostname()
-	return o
+	return o, unparsedArgs
 }
 
 // ControlConnection checks for the existence of an active control connection
@@ -114,8 +117,8 @@ func (c *Client) PrependArgs(args []string) {
 }
 
 // Connect establishes the ssh client connection
-func (c *Client) Connect(withWithExec bool) error {
-	if withWithExec {
+func (c *Client) Connect() error {
+	if c.Options.Exec {
 		sshPath, err := exec.LookPath(clientBinary)
 		if err != nil {
 			log.Fatal("ssh not found in PATH: ", err)
