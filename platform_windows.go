@@ -2,4 +2,4 @@
 
 package main
 
-var vaultBinary string = "vault.exe"
+const vaultBinary string = "vault.exe"

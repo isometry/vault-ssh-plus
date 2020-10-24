@@ -1,5 +1,5 @@
-// +build linux darwin
+// +build !windows
 
 package main
 
-var vaultBinary string = "vault"
+const vaultBinary string = "vault"
