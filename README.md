@@ -59,6 +59,12 @@ $ vssh -N -L8080:localhost:80 host.example.com
 
 Download and extract the [latest release](https://github.com/isometry/vault-ssh-client/releases/latest).
 
+### macOS
+
+```sh
+brew install isometry/tap/vault-ssh-client
+```
+
 ### Ansible
 
 If you've already installed my [release-from-github](https://github.com/isometry/ansible-role-release-from-github) role:

@@ -22,11 +22,11 @@ builds:
     binary: vssh
 archives:
   - format: zip
-    name_template: "{{ .ProjectName }}_v{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
 snapshot:
   name_template: "{{ .Tag }}-next"
 checksum:
-  name_template: "{{ .ProjectName }}_v{{ .Version }}_SHA256SUMS"
+  name_template: "{{ .ProjectName }}_{{ .Version }}_SHA256SUMS"
   algorithm: sha256
 release:
   draft: true
@@ -36,3 +36,12 @@ changelog:
     exclude:
       - "^docs:"
       - "^test:"
+brews:
+  - tap:
+      owner: isometry
+      name: homebrew-tap
+    folder: Formula
+    description: Automatically use HashiCorp Vault SSH Client Key Signing with ssh(1)
+    homepage: https://just.breathe.io/project/vault-ssh-client/
+    dependencies:
+      - name: vault
