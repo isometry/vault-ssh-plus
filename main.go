@@ -13,7 +13,7 @@ import (
 	"syscall"
 
 	"github.com/hashicorp/vault/api"
-	"github.com/isometry/vault-ssh-client/sshopts"
+	"github.com/isometry/vault-ssh-client/openssh"
 	"github.com/jessevdk/go-flags"
 )
 
@@ -47,7 +47,7 @@ func main() {
 		log.Fatal("failed to parse arguments: ", err)
 	}
 
-	sshOpts := sshopts.ParseArgs(sshArgs)
+	sshOpts := openssh.ParseArgs(sshArgs)
 
 	currentUser, _ := user.Current()
 
@@ -110,7 +110,7 @@ func testControlConnection(args []string) bool {
 	return (err == nil)
 }
 
-func getSignedKeyFile(opts options, sshOpts sshopts.Options) string {
+func getSignedKeyFile(opts options, sshOpts openssh.Options) string {
 	publicKeyBytes, err := ioutil.ReadFile(opts.PublicKey)
 	if err != nil {
 		log.Fatal("failed to read public key: ", err)

@@ -1,18 +1,20 @@
-package sshopts
+package openssh
 
 import (
 	"log"
-	"strings"
+	"net/url"
+	"strconv"
 
 	"github.com/jessevdk/go-flags"
 )
 
-// Positional arguments for the `ssh` command
+// Positional arguments for https://man.openbsd.org/ssh.1
 type Positional struct {
 	Destination string   `positional-arg-name:"destination" required:"true"`
 	Command     []string `positional-arg-name:"command"`
 }
 
+// Options for https://man.openbsd.org/ssh.1
 type Options struct {
 	IPv4Only               bool       `short:"4" description:"Enable IPv4 only"`
 	IPv6Only               bool       `short:"6" description:"Enable IPv6 only"`
@@ -59,8 +61,10 @@ type Options struct {
 	TrustedX11Forwarding   bool       `short:"Y" description:"Enable trusted X11 forwarding"`
 	Syslog                 bool       `short:"y" description:"Log to syslog(3)"`
 	Positional             Positional `positional-args:"yes"`
+	Host                   string
 }
 
+// ParseArgs parses arguments intended for https://man.openbsd.org/ssh.1
 func ParseArgs(args []string) Options {
 	var options Options
 
@@ -69,11 +73,20 @@ func ParseArgs(args []string) Options {
 		log.Fatal("error parsing ssh args: ", err)
 	}
 
-	if options.LoginName == "" {
-		destination := strings.Split(options.Positional.Destination, "@")
-		if len(destination) > 1 {
-			options.LoginName = destination[0]
-		}
+	uri, err := url.Parse(options.Positional.Destination)
+	if err != nil {
+		log.Fatal("error parsing ssh destination: ", err)
 	}
+	if uri.User.Username() != "" {
+		options.LoginName = uri.User.Username()
+	}
+	if uri.Port() != "" {
+		port, err := strconv.ParseUint(uri.Port(), 10, 16)
+		if err != nil {
+			log.Fatal("error parsing ssh port from scheme: ", err)
+		}
+		options.Port = uint16(port)
+	}
+	options.Host = uri.Hostname()
 	return options
 }
