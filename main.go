@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	"os"
 	"os/user"
@@ -10,12 +11,23 @@ import (
 	"github.com/jessevdk/go-flags"
 )
 
+var (
+	version = "dev"
+	commit  = "none"
+	date    = "unknown"
+)
+
 var options struct {
 	Signer  signer.Options  `group:"Vault SSH key signing options"`
 	OpenSSH openssh.Options `group:"OpenSSH ssh(1) options" hidden:"yes"`
+	Version func()          `long:"version" description:"show version"`
 }
 
 func main() {
+	options.Version = func() {
+		fmt.Printf("vault-ssh-client v%s (%s), %s\n", version, commit, date)
+		os.Exit(0)
+	}
 	parser := flags.NewParser(&options, flags.HelpFlag|flags.PassDoubleDash)
 	if _, err := parser.ParseArgs(os.Args[1:]); err != nil {
 		log.Fatal("error parsing arguments: ", err)

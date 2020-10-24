@@ -1,0 +1,3 @@
+*.exe
+dist
+vault-ssh-client
