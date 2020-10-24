@@ -29,8 +29,6 @@ type options struct {
 	Exec       bool   `long:"exec" env:"VAULT_SSH_EXEC" description:"Call ssh via execve(2)"`
 }
 
-var opts options
-
 // getToken uses the standard vault client binary to retrieve the "current" default token, avoiding reimplementation of token_helper, etc.
 func getTokenFromHelper() string {
 	token, err := exec.Command(vaultBinary, "read", "-field=id", "auth/token/lookup-self").Output()
@@ -41,21 +39,23 @@ func getTokenFromHelper() string {
 }
 
 func main() {
+	var opts options
+
 	parser := flags.NewParser(&opts, flags.HelpFlag|flags.PassDoubleDash|flags.IgnoreUnknown)
 	sshArgs, err := parser.ParseArgs(os.Args[1:])
 	if err != nil {
 		log.Fatal("failed to parse arguments: ", err)
 	}
 
-	sshOpts := openssh.ParseArgs(sshArgs)
+	sshClient := openssh.ParseArgs(sshArgs)
 
 	currentUser, _ := user.Current()
 
-	if sshOpts.LoginName == "" {
-		sshOpts.LoginName = currentUser.Username
-	}
-
 	homeDir := currentUser.HomeDir
+
+	if sshClient.Options.LoginName == "" {
+		sshClient.Options.LoginName = currentUser.Username
+	}
 
 	if strings.HasPrefix(opts.PrivateKey, "~/") {
 		opts.PrivateKey = filepath.Join(homeDir, opts.PrivateKey[2:])
@@ -65,49 +65,23 @@ func main() {
 		opts.PublicKey = filepath.Join(homeDir, opts.PublicKey[2:])
 	}
 
-	controlConnection := testControlConnection(sshArgs)
+	controlConnection := sshClient.ControlConnection()
 
-	var cmdArgs []string
-	if controlConnection {
-		cmdArgs = sshArgs
-	} else {
-		signedPublicKey := getSignedKeyFile(opts, sshOpts)
+	if !controlConnection {
+		signedPublicKey := getSignedKeyFile(opts, sshClient.Options)
 		defer os.Remove(signedPublicKey)
-		cmdArgs = append([]string{
+		sshClient.PrependArgs([]string{
 			"-o", "IdentitiesOnly=yes",
 			"-i", signedPublicKey,
 			"-i", opts.PrivateKey,
-		}, sshArgs...)
+		})
 	}
 
-	log.Printf("%v %v\n", cmdArgs, controlConnection)
+	log.Printf("%v %v\n", sshClient.Args, controlConnection)
 
-	if opts.Exec {
-		sshPath, err := exec.LookPath(sshBinary)
-		if err != nil {
-			log.Fatal("ssh binary not found in PATH: ", err)
-		}
-
-		err = syscall.Exec(sshPath, append([]string{sshBinary}, cmdArgs...), os.Environ())
-		if err != nil {
-			log.Fatal("failed to exec ssh: ", err)
-		}
-	} else {
-		cmd := exec.Command(sshBinary, cmdArgs...)
-		cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
-
-		err = cmd.Run()
-		if err != nil {
-			log.Fatal("error running ssh: ", err)
-		}
+	if sshClient.Connect(opts.Exec) != nil {
+		log.Fatal("failed to connect: ", err)
 	}
-}
-
-func testControlConnection(args []string) bool {
-	cmdArgs := append([]string{"-O", "check"}, args...)
-	cmd := exec.Command(sshBinary, cmdArgs...)
-	_, err := cmd.Output()
-	return (err == nil)
 }
 
 func getSignedKeyFile(opts options, sshOpts openssh.Options) string {

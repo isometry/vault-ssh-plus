@@ -3,15 +3,17 @@ package openssh
 import (
 	"log"
 	"net/url"
+	"os"
+	"os/exec"
 	"strconv"
+	"syscall"
 
 	"github.com/jessevdk/go-flags"
 )
 
-// Positional arguments for https://man.openbsd.org/ssh.1
-type Positional struct {
-	Destination string   `positional-arg-name:"destination" required:"true"`
-	Command     []string `positional-arg-name:"command"`
+type Client struct {
+	Args    []string
+	Options Options
 }
 
 // Options for https://man.openbsd.org/ssh.1
@@ -64,29 +66,66 @@ type Options struct {
 	Host                   string
 }
 
-// ParseArgs parses arguments intended for https://man.openbsd.org/ssh.1
-func ParseArgs(args []string) Options {
-	var options Options
+// Positional arguments for https://man.openbsd.org/ssh.1
+type Positional struct {
+	Destination string   `positional-arg-name:"destination" required:"true"`
+	Command     []string `positional-arg-name:"command"`
+}
 
-	_, err := flags.ParseArgs(&options, args)
+// ParseArgs parses arguments intended for https://man.openbsd.org/ssh.1
+func ParseArgs(args []string) Client {
+	var o Client
+
+	o.Args = args
+
+	_, err := flags.ParseArgs(&o.Options, args)
 	if err != nil {
 		log.Fatal("error parsing ssh args: ", err)
 	}
 
-	uri, err := url.Parse(options.Positional.Destination)
+	uri, err := url.Parse(o.Options.Positional.Destination)
 	if err != nil {
 		log.Fatal("error parsing ssh destination: ", err)
 	}
 	if uri.User.Username() != "" {
-		options.LoginName = uri.User.Username()
+		o.Options.LoginName = uri.User.Username()
 	}
 	if uri.Port() != "" {
 		port, err := strconv.ParseUint(uri.Port(), 10, 16)
 		if err != nil {
 			log.Fatal("error parsing ssh port from scheme: ", err)
 		}
-		options.Port = uint16(port)
+		o.Options.Port = uint16(port)
 	}
-	options.Host = uri.Hostname()
-	return options
+	o.Options.Host = uri.Hostname()
+	return o
+}
+
+// ControlConnection checks for the existence of an active control connection
+func (c *Client) ControlConnection() bool {
+	cmdArgs := append([]string{"-O", "check"}, c.Args...)
+	cmd := exec.Command(clientBinary, cmdArgs...)
+	_, err := cmd.Output()
+	return (err == nil)
+}
+
+func (c *Client) PrependArgs(args []string) {
+	c.Args = append(args, c.Args...)
+}
+
+// Connect establishes the ssh client connection
+func (c *Client) Connect(withWithExec bool) error {
+	if withWithExec {
+		sshPath, err := exec.LookPath(clientBinary)
+		if err != nil {
+			log.Fatal("ssh not found in PATH: ", err)
+		}
+
+		return syscall.Exec(sshPath, append([]string{clientBinary}, c.Args...), os.Environ())
+	} else {
+		cmd := exec.Command(clientBinary, c.Args...)
+		cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
+
+		return cmd.Run()
+	}
 }
