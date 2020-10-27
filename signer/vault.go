@@ -1,16 +1,12 @@
 package signer
 
 import (
-	"fmt"
 	"io/ioutil"
-	"log"
 	"os"
 	"os/exec"
-	"os/signal"
 	"os/user"
 	"path/filepath"
 	"strings"
-	"syscall"
 
 	"github.com/hashicorp/vault/api"
 	"github.com/jessevdk/go-flags"
@@ -22,27 +18,37 @@ type Client struct {
 	SignedKey  string
 }
 
+// Options define signer-specific flags
 type Options struct {
-	Path           string `long:"path" default:"ssh" env:"VAULT_SSH_PATH" description:"Vault SSH Path"`
-	Role           string `long:"role" default:"default" env:"VAULT_SSH_ROLE" description:"Vault SSH Role"`
-	TTL            uint   `long:"ttl" default:"300" env:"VAULT_SSH_TTL" description:"Vault SSH Certificate TTL"`
-	PortForwarding bool   `long:"port-forwarding" env:"VAULT_SSH_PORT_FORWARDING" description:"Force permit-port-forwarding extension"`
-	PTY            bool   `long:"pty" env:"VAULT_SSH_PTY" description:"Force permit-pty extension"`
-	PublicKey      string `short:"P" long:"public-key" default:"~/.ssh/id_rsa.pub" env:"VAULT_SSH_PUBLIC_KEY" description:"OpenSSH Public RSA Key to sign"`
+	Path       string     `long:"path" default:"ssh" env:"VAULT_SSH_PATH" description:"Vault SSH Path"`
+	Role       string     `long:"role" default:"default" env:"VAULT_SSH_ROLE" description:"Vault SSH Role"`
+	TTL        uint       `long:"ttl" default:"300" env:"VAULT_SSH_TTL" description:"Vault SSH Certificate TTL"`
+	PublicKey  string     `short:"P" long:"public-key" default:"~/.ssh/id_rsa.pub" env:"VAULT_SSH_PUBLIC_KEY" description:"OpenSSH Public RSA Key to sign"`
+	Extensions Extensions `group:"Certificate Extensions"`
 }
 
-func ParseArgs(args []string) (Client, []string) {
+// Extensions control what certificate extensions are required for the signed key
+type Extensions struct {
+	Default         bool `long:"default-extensions" env:"VAULT_SSH_DEFAULT_EXTENSIONS" description:"Disable Principal of Least Privilege and request signer-default extensions"`
+	AgentForwarding bool `long:"agent-forwarding" env:"VAULT_SSH_AGENT_FORWARDING" description:"Force permit-agent-forwarding extension"`
+	PortForwarding  bool `long:"port-forwarding" env:"VAULT_SSH_PORT_FORWARDING" description:"Force permit-port-forwarding extension"`
+	NoPTY           bool `long:"no-pty" env:"VAULT_SSH_NO_PTY" description:"Force disable permit-pty extension"`
+	UserRC          bool `long:"user-rc" env:"VAULT_SSH_USER_RC" description:"Force permit-user-rc extension"`
+	X11Forwarding   bool `long:"x11-forwarding" env:"VAULT_SSH_X11_FORWARDING" description:"Force permit-X11-forwarding extension"`
+}
+
+func ParseArgs(args []string) (Client, []string, error) {
 	var options Options
 
 	parser := flags.NewParser(&options, flags.HelpFlag|flags.PassDoubleDash|flags.IgnoreUnknown)
 	unparsedArgs, err := parser.ParseArgs(args)
 	if err != nil {
-		log.Fatal("error parsing vault args: ", err)
+		return Client{}, nil, err
 	}
 
 	currentUser, _ := user.Current()
 	if err != nil {
-		log.Fatal("unable to determine current user: ", err)
+		return Client{}, nil, err
 	}
 	homeDir := currentUser.HomeDir
 
@@ -51,7 +57,7 @@ func ParseArgs(args []string) (Client, []string) {
 	}
 
 	if _, err := os.Stat(options.PublicKey); os.IsNotExist(err) {
-		log.Fatal("public key does not exist: ", err)
+		return Client{}, nil, err
 	}
 
 	// TODO: further validate public key
@@ -61,45 +67,51 @@ func ParseArgs(args []string) (Client, []string) {
 		Options: options,
 	}
 
-	return vault, unparsedArgs
+	return vault, unparsedArgs, nil
 }
 
 // GetTokenFromHelper uses the standard vault client binary to retrieve the "current" default token, avoiding reimplementation of token_helper, etc.
-func GetTokenFromHelper() string {
+func GetTokenFromHelper() (string, error) {
 	token, err := exec.Command(clientBinary, "read", "-field=id", "auth/token/lookup-self").Output()
 	if err != nil {
-		log.Fatal("failed to read token: ", err)
+		return "", err
 	}
-	return string(token)
+
+	return string(token), nil
 }
 
 // SetMountPoint sets the MountPoint attribute to the appropriate Vault API SSH MountPoint
-func (c *Client) SetMountPoint() {
+func (c *Client) SetMountPoint() error {
 	vaultConfig := api.DefaultConfig()
 	if err := vaultConfig.ReadEnvironment(); err != nil {
-		log.Fatal("failed to read environment: ", err)
+		return err
 	}
 
 	vaultClient, err := api.NewClient(vaultConfig)
 	if err != nil {
-		log.Fatal("failed to create vault client: ", err)
+		return err
 	}
 
 	vaultToken := vaultClient.Token()
 	if vaultToken == "" {
-		vaultToken = GetTokenFromHelper()
+		vaultToken, err = GetTokenFromHelper()
+		if err != nil {
+			return err
+		}
 	}
 
 	vaultClient.SetToken(vaultToken)
 
 	c.MountPoint = vaultClient.SSHWithMountPoint(c.Options.Path)
+
+	return nil
 }
 
-// SignKey signs the configured public key, sets the SignedKey property to the filename of the signed key and returns the filename
-func (c *Client) SignKey(principal string) string {
+// GetSignedKey signs the configured public key, sets the SignedKey property to the filename of the signed key and returns the filename
+func (c *Client) GetSignedKey(principal string) (string, error) {
 	publicKeyBytes, err := ioutil.ReadFile(c.Options.PublicKey)
 	if err != nil {
-		log.Fatal("failed to read public key: ", err)
+		return "", err
 	}
 
 	request := make(map[string]interface{})
@@ -108,57 +120,47 @@ func (c *Client) SignKey(principal string) string {
 	request["valid_principals"] = principal
 	request["ttl"] = c.Options.TTL
 
-	extensions := map[string]string{}
-
-	if c.Options.PTY {
-		extensions["permit-pty"] = ""
+	if !c.Options.Extensions.Default {
+		request["extensions"] = c.RequiredExtensions()
 	}
 
-	if c.Options.PortForwarding {
-		extensions["permit-port-forwarding"] = ""
+	if err := c.SetMountPoint(); err != nil {
+		return "", err
 	}
-
-	// accept role default_extensions unless explicitly overridden by options
-	if len(extensions) > 0 {
-		request["extensions"] = extensions
-		log.Printf("[DEBUG] %v\n", extensions)
-	}
-
-	c.SetMountPoint()
 
 	signedKeySecret, err := c.MountPoint.SignKey(c.Options.Role, request)
 	if err != nil {
-		log.Fatal("failed to sign key: ", err)
+		return "", err
 	}
 
-	signedKeyFileTemplate := fmt.Sprintf("signed_%s@path=%s:role=%s:principal=%s.*", filepath.Base(c.Options.PublicKey), c.Options.Path, c.Options.Role, principal)
-	signedKeyFile, err := ioutil.TempFile(filepath.Dir(c.Options.PublicKey), signedKeyFileTemplate)
-	if err != nil {
-		log.Fatal("failed to create temporary public key file: ", err)
-	}
+	signedKey := signedKeySecret.Data["signed_key"].(string)
 
-	// ensure the signedKeyFile is deleted if we're killed
-	c.setupExitHandler()
-
-	if _, err = signedKeyFile.Write([]byte(signedKeySecret.Data["signed_key"].(string))); err != nil {
-		log.Fatal("failed to write to temporary signed key file: ", err)
-	}
-
-	if err := signedKeyFile.Close(); err != nil {
-		log.Fatal("failed to close temporary signed key file: ", err)
-	}
-
-	c.SignedKey = signedKeyFile.Name()
-
-	return c.SignedKey
+	return signedKey, nil
 }
 
-func (c *Client) setupExitHandler() {
-	s := make(chan os.Signal)
-	signal.Notify(s, os.Interrupt, syscall.SIGTERM, syscall.SIGQUIT)
-	go func() {
-		<-s
-		_ = os.Remove(c.SignedKey)
-		os.Exit(0)
-	}()
+// RequiredExtensions calculates the required set of extensions to request based on the options set on Client
+func (c *Client) RequiredExtensions() map[string]string {
+	extensions := map[string]string{}
+
+	if !c.Options.Extensions.NoPTY {
+		extensions["permit-pty"] = ""
+	}
+
+	if c.Options.Extensions.AgentForwarding {
+		extensions["permit-agent-forwarding"] = ""
+	}
+
+	if c.Options.Extensions.PortForwarding {
+		extensions["permit-port-forwarding"] = ""
+	}
+
+	if c.Options.Extensions.UserRC {
+		extensions["permit-user-rc"] = ""
+	}
+
+	if c.Options.Extensions.X11Forwarding {
+		extensions["permit-X11-forwarding"] = ""
+	}
+
+	return extensions
 }

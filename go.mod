@@ -1,4 +1,4 @@
-module github.com/isometry/vault-ssh-client
+module github.com/isometry/vault-ssh-plus
 
 go 1.12
 

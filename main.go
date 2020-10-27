@@ -4,14 +4,17 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/signal"
 	"os/user"
+	"path/filepath"
+	"syscall"
 
-	"github.com/isometry/vault-ssh-client/openssh"
-	"github.com/isometry/vault-ssh-client/signer"
+	"github.com/isometry/vault-ssh-plus/openssh"
+	"github.com/isometry/vault-ssh-plus/signer"
 	"github.com/jessevdk/go-flags"
 )
 
-var (
+const (
 	version = "dev"
 	commit  = "none"
 	date    = "unknown"
@@ -25,7 +28,7 @@ var options struct {
 
 func main() {
 	options.Version = func() {
-		fmt.Printf("vault-ssh-client v%s (%s), %s\n", version, commit, date)
+		fmt.Printf("vault-ssh-plus v%s (%s), %s\n", version, commit, date)
 		os.Exit(0)
 	}
 	parser := flags.NewParser(&options, flags.Default)
@@ -39,8 +42,15 @@ func main() {
 		}
 	}
 
-	vaultClient, unparsedArgs := signer.ParseArgs(os.Args[1:])
-	sshClient, _ := openssh.ParseArgs(unparsedArgs)
+	vaultClient, unparsedArgs, err := signer.ParseArgs(os.Args[1:])
+	if err != nil {
+		log.Fatal("[ERROR] parsing vault options: ", err)
+	}
+
+	sshClient, _, err := openssh.ParseArgs(unparsedArgs)
+	if err != nil {
+		log.Fatal("[ERROR] parsing ssh options: ", err)
+	}
 
 	if sshClient.Options.LoginName == "" {
 		currentUser, _ := user.Current()
@@ -49,20 +59,46 @@ func main() {
 
 	controlConnection := sshClient.ControlConnection()
 
-	if !controlConnection {
-		if !vaultClient.Options.PTY && len(sshClient.Options.ForcePTY) > 0 {
-			vaultClient.Options.PTY = true
+	if !controlConnection && sshClient.Options.ControlCommand != "exit" {
+		if !vaultClient.Options.Extensions.PortForwarding &&
+			(sshClient.Options.ProxyJump != "" ||
+				sshClient.Options.DynamicForward != nil ||
+				sshClient.Options.LocalForward != nil ||
+				sshClient.Options.RemoteForward != nil) {
+			vaultClient.Options.Extensions.PortForwarding = true
 		}
-		if !vaultClient.Options.PortForwarding &&
-			(sshClient.Options.JumpHost != "" ||
-				sshClient.Options.DynamicPortForwarding != "" ||
-				sshClient.Options.LocalForwarding != nil ||
-				sshClient.Options.RemoteForwarding != nil) {
-			vaultClient.Options.PortForwarding = true
+
+		if !vaultClient.Options.Extensions.NoPTY &&
+			(sshClient.Options.NoPTY ||
+				(sshClient.Options.ForcePTY == nil && len(sshClient.Options.Positional.RemoteCommand) > 0)) {
+			vaultClient.Options.Extensions.NoPTY = true
 		}
-		signedKey := vaultClient.SignKey(sshClient.Options.LoginName)
-		defer os.Remove(signedKey)
-		sshClient.PrependArgs([]string{"-i", signedKey})
+
+		if !vaultClient.Options.Extensions.X11Forwarding && sshClient.Options.ForwardX11 {
+			vaultClient.Options.Extensions.X11Forwarding = true
+		}
+
+		signedKey, err := vaultClient.GetSignedKey(sshClient.Options.LoginName)
+		if err != nil {
+			log.Fatal("[ERROR] failed to get signed key: ", err)
+		}
+
+		sshClient.SetSignedKey(signedKey)
+
+		signedKeyFile, err := sshClient.WriteSignedKeyFile(
+			filepath.Dir(vaultClient.Options.PublicKey),
+			fmt.Sprintf("signed_%s@*", filepath.Base(vaultClient.Options.PublicKey)),
+		)
+		if err != nil {
+			log.Fatal("[ERROR] failed to write signed key to file: ", err)
+		}
+
+		// ensure the signedKeyFile is deleted if we're killed
+		setupExitHandler(signedKeyFile)
+		defer os.Remove(signedKeyFile)
+
+		sshClient.PrependArgs([]string{"-o", fmt.Sprintf("CertificateFile=%s", signedKeyFile)})
+		// sshClient.PrependArgs([]string{"-i", signedKeyFile})
 	}
 
 	log.Printf("[DEBUG] %v %v\n", sshClient.Args, controlConnection)
@@ -70,4 +106,14 @@ func main() {
 	if err := sshClient.Connect(); err != nil {
 		log.Fatal("failed to connect: ", err)
 	}
+}
+
+func setupExitHandler(fn string) {
+	s := make(chan os.Signal)
+	signal.Notify(s, os.Interrupt, syscall.SIGTERM, syscall.SIGQUIT)
+	go func() {
+		<-s
+		_ = os.Remove(fn)
+		os.Exit(0)
+	}()
 }

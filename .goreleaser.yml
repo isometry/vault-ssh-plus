@@ -40,8 +40,9 @@ brews:
   - tap:
       owner: isometry
       name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
     folder: Formula
     description: Automatically use HashiCorp Vault SSH Client Key Signing with ssh(1)
-    homepage: https://just.breathe.io/project/vault-ssh-client/
+    homepage: https://just.breathe.io/project/vault-ssh-plus/
     dependencies:
       - name: vault

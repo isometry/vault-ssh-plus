@@ -1,11 +1,13 @@
-# vault-ssh-client (vssh)
+# vault-ssh-plus (vssh)
 
-A wrapper for the [ssh(1)](https://man.openbsd.org/ssh.1) client to eliminate the overhead of using of short-lived client keys issued from [@hashicorp Vault](https://www.vaultproject.io/).
+An enhanced implementation of [`vault ssh`](https://www.vaultproject.io/docs/commands/ssh), wrapping the OpenSSH `ssh` client to eliminate the management overhead of using of short-lived SSH client keys CA-signed by [@hashicorp Vault](https://www.vaultproject.io/).
 
 ## Features
 
-* Full support for all [ssh(1)](https://man.openbsd.org/ssh.1) capabilities.
-* Automatic and transparent just-in-time delivery of short-lived, signed, single-use [ssh(1)](https://man.openbsd.org/ssh.1) RSA client keys.
+* Support for all [ssh(1)](https://man.openbsd.org/ssh.1) capabilities, including non-filesystem private keys (e.g. `gpg-agent`, PKCS#11, etc.).
+* Automatic and transparent just-in-time delivery of short-lived, signed, single-use `ssh` client keys.
+* Principal of Least Privilege: by default signed keys only permit the specific options required.
+* Significantly lower memory overhead than `vault ssh`.
 
 ## Requirements
 
@@ -24,18 +26,30 @@ Usage:
   vssh [options] destination [command]
 
 Application Options:
-      --version          show version
+      --version           show version
 
-Vault SSH key signing options:
-      --path=            Vault SSH Path (default: ssh) [$VAULT_SSH_PATH]
-      --role=            Vault SSH Role (default: default) [$VAULT_SSH_ROLE]
-      --ttl=             Vault SSH Certificate TTL (default: 300) [$VAULT_SSH_TTL]
-      --port-forwarding  Force permit-port-forwarding extension [$VAULT_SSH_PORT_FORWARDING]
-      --pty              Force permit-pty extension [$VAULT_SSH_PTY]
-  -P, --public-key=      OpenSSH Public RSA Key to sign (default: ~/.ssh/id_rsa.pub) [$VAULT_SSH_PUBLIC_KEY]
+Vault SSH key signing Options:
+      --path=             Vault SSH Path (default: ssh) [$VAULT_SSH_PATH]
+      --role=             Vault SSH Role (default: default) [$VAULT_SSH_ROLE]
+      --ttl=              Vault SSH Certificate TTL (default: 300) [$VAULT_SSH_TTL]
+  -P, --public-key=       OpenSSH Public RSA Key to sign (default:
+                          ~/.ssh/id_rsa.pub) [$VAULT_SSH_PUBLIC_KEY]
+      --polp              Enforce Principal of Least Privilege [$VAULT_SSH_POLP]
+
+Certificate Extensions:
+      --default-extensions  Disable Principal of Least Privilege and request
+                            signer-default extensions [$VAULT_SSH_DEFAULT_EXTENSIONS]
+      --agent-forwarding    Force permit-agent-forwarding extension
+                            [$VAULT_SSH_AGENT_FORWARDING]
+      --port-forwarding     Force permit-port-forwarding extension
+                            [$VAULT_SSH_PORT_FORWARDING]
+      --no-pty              Force disable permit-pty extension [$VAULT_SSH_NO_PTY]
+      --user-rc             Force permit-user-rc extension [$VAULT_SSH_USER_RC]
+      --x11-forwarding      Force permit-X11-forwarding extension
+                            [$VAULT_SSH_X11_FORWARDING]
 
 Help Options:
-  -h, --help             Show this help message
+  -h, --help              Show this help message
 ```
 
 If you need to override the [SSH Client Key Signing](https://www.vaultproject.io/docs/secrets/ssh/signed-ssh-certificates.html#client-key-signing) mountpoint or role, this is most easily achieved by setting the `VAULT_SSH_PATH` and `VAULT_SSH_ROLE` environment variables in your shell rc.
@@ -45,10 +59,9 @@ Similarly, if you prefer an `ed25519` or `ecdsa` key, override with `VAULT_SSH_P
 ### Example
 
 ```console
-$ export VAULT_ADDR=https://vault.example.com:8200
+$ export VAULT_ADDR=https://vault.example.com:8200 VAULT_SSH_PATH=ssh-client-signer VAULT_SSH_PUBLIC_KEY=~/.ssh/id_ed25519.pub
 $ vault login -method=oidc
 ...
-$ export VAULT_SSH_PATH=ssh-client-signer
 $ vssh -N -L8080:localhost:80 host.example.com
 ...
 ```
@@ -57,12 +70,12 @@ $ vssh -N -L8080:localhost:80 host.example.com
 
 ### Manual
 
-Download and extract the [latest release](https://github.com/isometry/vault-ssh-client/releases/latest).
+Download and extract the [latest release](https://github.com/isometry/vault-ssh-plus/releases/latest).
 
 ### macOS
 
 ```sh
-brew install isometry/tap/vault-ssh-client
+brew install isometry/tap/vault-ssh-plus
 ```
 
 ### Ansible
@@ -70,7 +83,7 @@ brew install isometry/tap/vault-ssh-client
 If you've already installed my [release-from-github](https://github.com/isometry/ansible-role-release-from-github) role:
 
 ```sh
-ansible -m import_role -a name=release-from-github -e release_repo=isometry/vault-ssh-client -e release_hashicorp_style=yes localhost
+ansible -m import_role -a name=release-from-github -e release_repo=isometry/vault-ssh-plus -e release_hashicorp_style=yes localhost
 ```
 
 ## Troubleshooting
