@@ -46,3 +46,7 @@ brews:
     homepage: https://just.breathe.io/project/vault-ssh-plus/
     dependencies:
       - name: vault
+    test: |
+      system "#{bin}/vssh --version"
+    install: |
+      bin.install "vssh"

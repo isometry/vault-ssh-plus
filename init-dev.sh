@@ -24,4 +24,17 @@ vault write ssh/roles/default - <<-EOH
     }
 EOH
 
+vault write ssh/roles/root - <<-EOH
+    {
+        "key_type": "ca",
+        "allow_user_certificates": true,
+        "algorithm_signer": "rsa-sha2-512",
+        "default_user": "root",
+        "allowed_users": "root",
+        "default_extensions": [],
+        "allowed_extensions": "permit-pty,permit-port-forwarding",
+        "ttl": "60"
+    }
+EOH
+
 fg

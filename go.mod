@@ -5,5 +5,5 @@ go 1.12
 require (
 	github.com/hashicorp/vault/api v1.0.4
 	github.com/jessevdk/go-flags v1.4.0
-	golang.org/x/crypto v0.0.0-20201016220609-9e8e0b390897 // indirect
+	golang.org/x/crypto v0.0.0-20201016220609-9e8e0b390897
 )

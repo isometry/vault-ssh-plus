@@ -8,6 +8,7 @@ An enhanced implementation of [`vault ssh`](https://www.vaultproject.io/docs/com
 * Automatic and transparent just-in-time delivery of short-lived, signed, single-use `ssh` client keys.
 * Principal of Least Privilege: by default signed keys only permit the specific options required.
 * Significantly lower memory overhead than `vault ssh`.
+* Automatic username mapping for roles with a single, fixed entry in `allowed_users` (e.g. `root`, `jenkins`, `ansible`).
 
 ## Requirements
 
@@ -26,30 +27,24 @@ Usage:
   vssh [options] destination [command]
 
 Application Options:
-      --version           show version
+      --version                           Show version
 
 Vault SSH key signing Options:
-      --path=             Vault SSH Path (default: ssh) [$VAULT_SSH_PATH]
-      --role=             Vault SSH Role (default: default) [$VAULT_SSH_ROLE]
-      --ttl=              Vault SSH Certificate TTL (default: 300) [$VAULT_SSH_TTL]
-  -P, --public-key=       OpenSSH Public RSA Key to sign (default:
-                          ~/.ssh/id_rsa.pub) [$VAULT_SSH_PUBLIC_KEY]
-      --polp              Enforce Principal of Least Privilege [$VAULT_SSH_POLP]
+      --path=                             Vault SSH Path (default: ssh) [$VAULT_SSH_PATH]
+      --role=                             Vault SSH Role (default: default) [$VAULT_SSH_ROLE]
+      --ttl=                              Vault SSH Certificate TTL (default: 300) [$VAULT_SSH_TTL]
+  -P, --public-key=                       OpenSSH Public RSA Key to sign (default: ~/.ssh/id_rsa.pub) [$VAULT_SSH_PUBLIC_KEY]
 
 Certificate Extensions:
-      --default-extensions  Disable Principal of Least Privilege and request
-                            signer-default extensions [$VAULT_SSH_DEFAULT_EXTENSIONS]
-      --agent-forwarding    Force permit-agent-forwarding extension
-                            [$VAULT_SSH_AGENT_FORWARDING]
-      --port-forwarding     Force permit-port-forwarding extension
-                            [$VAULT_SSH_PORT_FORWARDING]
-      --no-pty              Force disable permit-pty extension [$VAULT_SSH_NO_PTY]
-      --user-rc             Force permit-user-rc extension [$VAULT_SSH_USER_RC]
-      --x11-forwarding      Force permit-X11-forwarding extension
-                            [$VAULT_SSH_X11_FORWARDING]
+      --default-extensions                Disable automatic extension calculation and request signer-default extensions [$VAULT_SSH_DEFAULT_EXTENSIONS]
+      --agent-forwarding                  Force permit-agent-forwarding extension [$VAULT_SSH_AGENT_FORWARDING]
+      --port-forwarding                   Force permit-port-forwarding extension [$VAULT_SSH_PORT_FORWARDING]
+      --no-pty                            Force disable permit-pty extension [$VAULT_SSH_NO_PTY]
+      --user-rc                           Enable permit-user-rc extension [$VAULT_SSH_USER_RC]
+      --x11-forwarding                    Force permit-X11-forwarding extension [$VAULT_SSH_X11_FORWARDING]
 
 Help Options:
-  -h, --help              Show this help message
+  -h, --help                              Show this help message
 ```
 
 If you need to override the [SSH Client Key Signing](https://www.vaultproject.io/docs/secrets/ssh/signed-ssh-certificates.html#client-key-signing) mountpoint or role, this is most easily achieved by setting the `VAULT_SSH_PATH` and `VAULT_SSH_ROLE` environment variables in your shell rc.

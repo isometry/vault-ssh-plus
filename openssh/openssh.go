@@ -12,6 +12,7 @@ import (
 	"syscall"
 
 	"github.com/jessevdk/go-flags"
+	"golang.org/x/crypto/ssh"
 )
 
 type Client struct {
@@ -19,6 +20,7 @@ type Client struct {
 	Options       Options
 	SignedKey     string
 	SignedKeyFile string
+	Certificate   *ssh.Certificate
 }
 
 // Options for https://man.openbsd.org/ssh.1
@@ -49,7 +51,7 @@ type Options struct {
 	MacSpec               string     `short:"m" description:"Mac Specification"`
 	NoRemoteCommand       bool       `short:"N" description:"Do not execute a remote command"`
 	NullStdin             bool       `short:"n" description:"Redirect stdin from /dev/null"`
-	ControlCommand        string     `short:"O" description:"Send control command"`
+	ControlCommand        string     `short:"O" choice:"check" choice:"forward" choice:"cancel" choice:"exit" choice:"stop" description:"Send control command"`
 	Option                []string   `short:"o" description:"Override configuration option"`
 	Port                  uint16     `short:"p" default:"22" description:"Port"`
 	QueryOption           string     `short:"Q" description:"Query supported algorithms"`
@@ -79,25 +81,23 @@ type Positional struct {
 }
 
 // ParseArgs parses arguments intended for https://man.openbsd.org/ssh.1
-func ParseArgs(args []string) (Client, []string, error) {
-	var o Client
+func ParseArgs(client *Client, args []string) ([]string, error) {
+	client.Args = args
 
-	o.Args = args
-
-	parser := flags.NewParser(&o.Options, flags.PassDoubleDash|flags.IgnoreUnknown)
+	parser := flags.NewParser(&client.Options, flags.PassDoubleDash|flags.IgnoreUnknown)
 	unparsedArgs, err := parser.ParseArgs(args)
 	if err != nil {
-		return Client{}, nil, err
+		return nil, err
 	}
 
-	if err := o.ParseDestination(o.Options.Positional.Destination); err != nil {
-		return Client{}, nil, err
+	if err := client.ParseDestination(client.Options.Positional.Destination); err != nil {
+		return nil, err
 	}
-	if err := o.ParseOptions(o.Options.Option, "="); err != nil {
-		return Client{}, nil, err
+	if err := client.ParseOptions(client.Options.Option, "="); err != nil {
+		return nil, err
 	}
 
-	return o, unparsedArgs, nil
+	return unparsedArgs, nil
 }
 
 // ParseDestination parses the `destination` argument as an `ssh://` scheme URI and updates options according to what it finds
@@ -130,8 +130,9 @@ func (c *Client) ParseDestination(destination string) error {
 // ParseOptions parses ssh_config options of the form `key[separator]value` and updates other options accordingly
 func (c *Client) ParseOptions(options []string, separator string) error {
 	for _, option := range options {
-		split := strings.Split(option, separator)
-		key, value := split[0], strings.Join(split[1:], separator)
+		split := strings.SplitN(option, separator, 2)
+		key, value := split[0], split[1]
+
 		switch key {
 		case "User":
 			if c.Options.LoginName == "" {
@@ -169,8 +170,12 @@ func (c *Client) PrependArgs(args []string) {
 }
 
 // SetSignedKey sets the Client's signed key
-func (c *Client) SetSignedKey(key string) {
+func (c *Client) SetSignedKey(key string) error {
 	c.SignedKey = key
+	if err := c.ParseSignedKey(); err != nil {
+		return err
+	}
+	return nil
 }
 
 // WriteSignedKeyFile updates the signed key at path/name
@@ -213,4 +218,20 @@ func (c *Client) Connect() error {
 
 		return cmd.Run()
 	}
+}
+
+func (c *Client) ParseSignedKey() error {
+	pub, _, _, _, err := ssh.ParseAuthorizedKey([]byte(c.SignedKey))
+	if err != nil {
+		return err
+	}
+
+	cert, ok := pub.(*ssh.Certificate)
+	if !ok {
+		return nil // XXX: return an appropriate custom error!
+	}
+
+	c.Certificate = cert
+
+	return nil
 }
