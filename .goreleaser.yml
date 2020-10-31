@@ -29,7 +29,7 @@ checksum:
   name_template: "{{ .ProjectName }}_{{ .Version }}_SHA256SUMS"
   algorithm: sha256
 release:
-  draft: true
+  draft: false
 changelog:
   sort: asc
   filters:
