@@ -14,7 +14,7 @@ import (
 	"github.com/jessevdk/go-flags"
 )
 
-const (
+var (
 	version = "dev"
 	commit  = "none"
 	date    = "unknown"
