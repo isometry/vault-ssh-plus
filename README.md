@@ -4,22 +4,25 @@ An enhanced implementation of [`vault ssh`](https://www.vaultproject.io/docs/com
 
 ## Features
 
-* Support for all [ssh(1)](https://man.openbsd.org/ssh.1) capabilities, including non-filesystem private keys (e.g. `gpg-agent`, PKCS#11, etc.).
-* Automatic and transparent just-in-time delivery of short-lived, signed, single-use `ssh` client keys.
-* Principal of Least Privilege: by default signed keys only permit the specific options required.
+* Support for all [`ssh(1)`](https://man.openbsd.org/ssh.1) capabilities, including:
+  * non-filesystem private keys (e.g. `gpg-agent`, PKCS#11, etc.);
+  * arbitrary [`ssh_config(5)`](https://man.openbsd.org/ssh_config.5) configuration (e.g. `Host` aliases and `Match` clauses);
+  * `ControlMaster` connection sharing.
+* Automatic and transparent just-in-time delivery of short-lived, CA-signed, single-use `ssh` client keys.
+* Adherence to the Principal of Least Privilege: by default, signed keys only permit the specific extensions required for the `ssh` options given.
+* Automatic username mapping for Vault roles with a single, fixed entry in `allowed_users` (e.g. `root`, `jenkins`, `ansible`).
 * Significantly lower memory overhead than `vault ssh`.
-* Automatic username mapping for roles with a single, fixed entry in `allowed_users` (e.g. `root`, `jenkins`, `ansible`).
 
 ## Requirements
 
 * A [HashiCorp Vault](https://www.vaultproject.io/) instance configured for [SSH Client Key Signing](https://www.vaultproject.io/docs/secrets/ssh/signed-ssh-certificates.html#client-key-signing), access to an appropriate role, and an SSH server configured to trust the Vault CA.
-* An active Vault token (either in the `VAULT_TOKEN` environment variable, or – if the standard `vault` binary is available within `$PATH` – within a Vault Token Helper). The `VAULT_ADDR` environment variable must also be set.
-* The `ssh` binary available within `$PATH`.
-* A standard SSH private key (stored anywhere supported by ssh(1)), and the associated *unsigned* public key (default: `~/.ssh/id_rsa.pub`).
+* An active Vault token (either in the `VAULT_TOKEN` environment variable, or – if the standard `vault` binary is available within `$PATH` – available from a Vault Token Helper). The `VAULT_ADDR` environment variable must also be set.
+* OpenSSH 7.2 or newer `ssh` client binary.
+* A standard SSH private key (stored anywhere supported by `ssh`), and the associated *unsigned* public key (default: `~/.ssh/id_rsa.pub`). `vssh` does *not* require access to the private key.
 
 ## Usage
 
-In addition to all the options accepted by [ssh(1)](https://man.openbsd.org/ssh.1), `vssh` accepts the following options:
+In addition to all the options accepted by [`ssh(1)`](https://man.openbsd.org/ssh.1), `vssh` accepts the following options:
 
 ```console
 $ vssh --help
@@ -51,13 +54,17 @@ If you need to override the [SSH Client Key Signing](https://www.vaultproject.io
 
 Similarly, if you prefer an `ed25519` or `ecdsa` key, override with `VAULT_SSH_PUBLIC_KEY`.
 
+By default, the certificate will be requested with only those extensions required for the current command (default `permit-pty` unless `-N` is specified). Additional extensions may be requested (e.g. to support expected future multiplexed connections) with the "Certificate Extensions" arguments, or the Vault role default extensions may be forced with `--default-extensions`.
+
 ### Example
+
+The following will request that the ed25519 public key be signed by the Vault signed at `https://vault.example.com:8200/v1/ssh/sign/ssh-client-signer`, with `permit-pty` and `permit-port-forwarding` extensions to support the connection to `host.example.com`
 
 ```console
 $ export VAULT_ADDR=https://vault.example.com:8200 VAULT_SSH_PATH=ssh-client-signer VAULT_SSH_PUBLIC_KEY=~/.ssh/id_ed25519.pub
 $ vault login -method=oidc
 ...
-$ vssh -N -L8080:localhost:80 host.example.com
+$ vssh -L8080:localhost:80 host.example.com
 ...
 ```
 

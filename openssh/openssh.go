@@ -1,29 +1,31 @@
 package openssh
 
 import (
+	"bufio"
+	"bytes"
 	"io/ioutil"
-	"log"
-	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"syscall"
 
-	"github.com/jessevdk/go-flags"
+	"github.com/pkg/errors"
 	"golang.org/x/crypto/ssh"
 )
 
 type Client struct {
-	Args          []string
-	Options       Options
-	SignedKey     string
-	SignedKeyFile string
-	Certificate   *ssh.Certificate
+	Args              []string
+	HostConfig        []string
+	User              string
+	Hostname          string
+	Extensions        Extensions
+	CertificateString string
+	CertificateFile   string
+	CertificateObject *ssh.Certificate
 }
 
-// Options for https://man.openbsd.org/ssh.1
+// Options for https://man.openbsd.org/ssh.1; parsed simply to provide accurate Destination and RemoteCommand
 type Options struct {
 	IPv4Only              bool       `short:"4" description:"Enable IPv4 only"`
 	IPv6Only              bool       `short:"6" description:"Enable IPv6 only"`
@@ -70,8 +72,6 @@ type Options struct {
 	ForwardX11Trusted     bool       `short:"Y" description:"Enable trusted X11 forwarding"`
 	Syslog                bool       `short:"y" description:"Log to syslog(3)"`
 	Positional            Positional `positional-args:"yes"`
-	Exec                  bool       `long:"exec" env:"VAULT_SSH_EXEC" description:"Call ssh via execve(2)"`
-	Hostname              string
 }
 
 // Positional arguments for https://man.openbsd.org/ssh.1
@@ -80,76 +80,61 @@ type Positional struct {
 	RemoteCommand []string `positional-arg-name:"command"`
 }
 
-// ParseArgs parses arguments intended for https://man.openbsd.org/ssh.1
-func ParseArgs(client *Client, args []string) ([]string, error) {
-	client.Args = args
-
-	parser := flags.NewParser(&client.Options, flags.PassDoubleDash|flags.IgnoreUnknown)
-	unparsedArgs, err := parser.ParseArgs(args)
-	if err != nil {
-		return nil, err
-	}
-
-	if err := client.ParseDestination(client.Options.Positional.Destination); err != nil {
-		return nil, err
-	}
-	if err := client.ParseOptions(client.Options.Option, "="); err != nil {
-		return nil, err
-	}
-
-	return unparsedArgs, nil
+type Extensions struct {
+	AgentForwarding bool
+	PortForwarding  bool
+	NoPTY           bool
+	UserRC          bool
+	X11Forwarding   bool
 }
 
-// ParseDestination parses the `destination` argument as an `ssh://` scheme URI and updates options according to what it finds
-func (c *Client) ParseDestination(destination string) error {
-	if destination[0:6] != "ssh://" {
-		destination = "ssh://" + destination
-	}
-	uri, err := url.Parse(destination)
+// ParseConfig uses `ssh -G` to obtain a fully processed ssh_config(5), parse the result and update configuration accordingly
+func (c *Client) ParseConfig() error {
+	cmdArgs := append([]string{"-G"}, c.Args...)
+	cmd := exec.Command(clientBinary, cmdArgs...)
+
+	output, err := cmd.Output()
 	if err != nil {
-		return err
+		return errors.Wrap(err, "getting ssh_config")
 	}
 
-	if uri.User.Username() != "" {
-		c.Options.LoginName = uri.User.Username()
-	}
+	scanner := bufio.NewScanner(bytes.NewReader(output))
 
-	if uri.Port() != "" {
-		port, err := strconv.ParseUint(uri.Port(), 10, 16)
-		if err != nil {
-			log.Print("[WARN] error parsing port from destination: ", err)
-		} else {
-			c.Options.Port = uint16(port)
+	for scanner.Scan() {
+		split := strings.SplitN(scanner.Text(), " ", 2)
+		key := strings.ToLower(split[0])
+		value := ""
+		if len(split) == 2 {
+			value = split[1]
 		}
-	}
-	c.Options.Hostname = uri.Hostname()
-
-	return nil
-}
-
-// ParseOptions parses ssh_config options of the form `key[separator]value` and updates other options accordingly
-func (c *Client) ParseOptions(options []string, separator string) error {
-	for _, option := range options {
-		split := strings.SplitN(option, separator, 2)
-		key, value := split[0], split[1]
 
 		switch key {
-		case "User":
-			if c.Options.LoginName == "" {
-				c.Options.LoginName = value
+		case "user":
+			c.User = value
+		case "hostname":
+			c.Hostname = value
+		case "dynamicforward":
+			c.Extensions.PortForwarding = true
+		case "forwardagent":
+			if value == "yes" {
+				c.Extensions.AgentForwarding = true
 			}
-		case "Port":
-			port, err := strconv.ParseUint(value, 10, 16)
-			if err != nil {
-				return err
+		case "forwardx11":
+			if value == "yes" {
+				c.Extensions.X11Forwarding = true
 			}
-			c.Options.Port = uint16(port)
-		case "DynamicForward":
-			c.Options.DynamicForward = append(c.Options.DynamicForward, value)
-		case "LocalForward":
-			c.Options.LocalForward = append(c.Options.LocalForward, value)
-		case "RemoteForward":
-			c.Options.RemoteForward = append(c.Options.RemoteForward, value)
+		case "forwardx11trusted":
+			if value == "yes" {
+				c.Extensions.X11Forwarding = true
+			}
+		case "localforward":
+			c.Extensions.PortForwarding = true
+		case "remoteforward":
+			c.Extensions.PortForwarding = true
+		case "requesttty":
+			if value == "false" {
+				c.Extensions.NoPTY = true
+			}
 		}
 	}
 
@@ -169,69 +154,69 @@ func (c *Client) PrependArgs(args []string) {
 	c.Args = append(args, c.Args...)
 }
 
-// SetSignedKey sets the Client's signed key
+// SetSignedKey sets Client.SignedKey
 func (c *Client) SetSignedKey(key string) error {
-	c.SignedKey = key
-	if err := c.ParseSignedKey(); err != nil {
-		return err
-	}
-	return nil
+	var err error
+
+	c.CertificateString = key
+	c.CertificateObject, err = ParseSignedKey(key)
+
+	return err
 }
 
-// WriteSignedKeyFile updates the signed key at path/name
-func (c *Client) WriteSignedKeyFile(path, name string) (string, error) {
+// WriteCertificateFile updates the certificate file at path/name
+func (c *Client) WriteCertificateFile(path, name string) (string, error) {
 	if strings.Contains(name, "*") {
 		signedKeyFile, err := ioutil.TempFile(path, name)
 		if err != nil {
-			return "", err
+			return "", errors.Wrap(err, "creating temporary certificate file")
 		}
-		if _, err := signedKeyFile.Write([]byte(c.SignedKey)); err != nil {
-			return "", err
+		if _, err := signedKeyFile.Write([]byte(c.CertificateString)); err != nil {
+			return "", errors.Wrap(err, "writing certificate to temporary file")
 		}
 
 		if err := signedKeyFile.Close(); err != nil {
-			return "", err
+			return "", errors.Wrap(err, "closing temporary certificate file")
 		}
 
 		return signedKeyFile.Name(), nil
 	} else {
 		signedKeyFileName := filepath.Join(path, name)
-		if err := ioutil.WriteFile(signedKeyFileName, []byte(c.SignedKey), 0600); err != nil {
-			return "", err
+		if err := ioutil.WriteFile(signedKeyFileName, []byte(c.CertificateString), 0600); err != nil {
+			return "", errors.Wrap(err, "writing certificate to file")
 		}
 		return signedKeyFileName, nil
 	}
 }
 
 // Connect establishes the ssh client connection
-func (c *Client) Connect() error {
-	if c.Options.Exec {
+func (c *Client) Connect(connectionSharing bool) error {
+	// save some memory if we're connection sharing
+	if connectionSharing {
 		sshPath, err := exec.LookPath(clientBinary)
 		if err != nil {
 			return err
 		}
 
 		return syscall.Exec(sshPath, append([]string{clientBinary}, c.Args...), os.Environ())
-	} else {
-		cmd := exec.Command(clientBinary, c.Args...)
-		cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
-
-		return cmd.Run()
 	}
+
+	cmd := exec.Command(clientBinary, c.Args...)
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
+
+	return cmd.Run()
 }
 
-func (c *Client) ParseSignedKey() error {
-	pub, _, _, _, err := ssh.ParseAuthorizedKey([]byte(c.SignedKey))
+func ParseSignedKey(certificateString string) (*ssh.Certificate, error) {
+	publicKey, _, _, _, err := ssh.ParseAuthorizedKey([]byte(certificateString))
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	cert, ok := pub.(*ssh.Certificate)
+	certificate, ok := publicKey.(*ssh.Certificate)
 	if !ok {
-		return nil // XXX: return an appropriate custom error!
+		return nil, errors.New("invalid certificate")
 	}
 
-	c.Certificate = cert
-
-	return nil
+	return certificate, nil
 }

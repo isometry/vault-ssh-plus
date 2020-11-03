@@ -10,6 +10,7 @@ import (
 
 	"github.com/hashicorp/vault/api"
 	"github.com/jessevdk/go-flags"
+	"github.com/pkg/errors"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -46,25 +47,25 @@ func ParseArgs(client *Client, args []string) ([]string, error) {
 	parser := flags.NewParser(&options, flags.PassDoubleDash|flags.IgnoreUnknown)
 	unparsedArgs, err := parser.ParseArgs(args)
 	if err != nil {
-		return nil, err
+		return nil, errors.Wrap(err, "parsing arguments")
 	}
 
 	if strings.HasPrefix(options.PublicKey, "~/") {
 		currentUser, _ := user.Current()
 		if err != nil {
-			return nil, err
+			return nil, errors.Wrap(err, "getting current user")
 		}
 
 		options.PublicKey = filepath.Join(currentUser.HomeDir, options.PublicKey[2:])
 	}
 
 	if err = client.SetPublicKey(options.PublicKey); err != nil {
-		return nil, err
+		return nil, errors.Wrap(err, "setting public key")
 	}
 
 	client.API, err = GetVaultClient()
 	if err != nil {
-		return nil, err
+		return nil, errors.Wrap(err, "initializing Vault client")
 	}
 
 	client.Options = options
@@ -77,12 +78,12 @@ func (c *Client) SetPublicKey(fn string) error {
 
 	publicKey, err := ioutil.ReadFile(fn)
 	if err != nil {
-		return err
+		return errors.Wrap(err, "reading public key")
 	}
 
 	_, _, _, _, err = ssh.ParseAuthorizedKey(publicKey)
 	if err != nil {
-		return err
+		return errors.Wrap(err, "parsing public key")
 	}
 
 	c.PublicKey = publicKey
@@ -94,7 +95,7 @@ func (c *Client) SetPublicKey(fn string) error {
 func GetTokenFromHelper() (string, error) {
 	token, err := exec.Command(clientBinary, "read", "-field=id", "auth/token/lookup-self").Output()
 	if err != nil {
-		return "", err
+		return "", errors.Wrap(err, "getting token from helper")
 	}
 
 	return string(token), nil

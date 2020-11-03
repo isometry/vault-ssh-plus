@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/exec"
 	"os/signal"
-	"os/user"
 	"path/filepath"
 	"syscall"
 
@@ -18,19 +18,20 @@ var (
 	version = "dev"
 	commit  = "none"
 	date    = "unknown"
-)
-
-func init() {
-	var options struct {
+	options struct {
 		Signer  signer.Options  `group:"Vault SSH key signing Options"`
 		OpenSSH openssh.Options `group:"OpenSSH ssh(1) Options" hidden:"yes"`
 		Version func()          `long:"version" description:"Show version"`
 	}
+)
 
-	options.Version = func() {
-		fmt.Printf("vault-ssh-plus v%s (%s), %s\n", version, commit, date)
-		os.Exit(0)
-	}
+func showVersion() {
+	fmt.Printf("vault-ssh-plus v%s (%s), %s\n", version, commit, date)
+	os.Exit(0)
+}
+
+func init() {
+	options.Version = showVersion
 
 	parser := flags.NewParser(&options, flags.Default)
 	parser.Usage = "[options] destination [command]"
@@ -44,32 +45,40 @@ func init() {
 }
 
 func main() {
+	os.Exit(processCommand())
+}
+
+func processCommand() int {
 	var (
 		vaultClient signer.Client
 		sshClient   openssh.Client
 		err         error
 	)
 
-	unparsedArgs, err := signer.ParseArgs(&vaultClient, os.Args[1:])
+	sshClient.Args, err = signer.ParseArgs(&vaultClient, os.Args[1:])
 	if err != nil {
-		log.Fatal("[ERROR] parsing vault options: ", err)
+		log.Fatal("[ERROR] ", err)
 	}
 
-	_, err = openssh.ParseArgs(&sshClient, unparsedArgs)
-	if err != nil {
-		log.Fatal("[ERROR] parsing ssh options: ", err)
+	userOverridden := overrideUser(&vaultClient, &sshClient)
+	if userOverridden {
+		log.Println("[INFO] remote user overridden by vault role")
 	}
 
-	if sshClient.Options.LoginName == "" {
-		sshClient.Options.LoginName = getDefaultUser(&vaultClient, &sshClient)
+	if err := sshClient.ParseConfig(); err != nil {
+		log.Fatal("[ERROR] failed to parse ssh configuration: ", err)
 	}
 
+	// if we have already have a Control Connection, use it
 	controlConnection := sshClient.ControlConnection()
+	if controlConnection {
+		log.Println("[INFO] existing control connection detected")
+	}
 
-	if !controlConnection && sshClient.Options.ControlCommand != "exit" {
-		updateRequestExtensions(&vaultClient.Options.Extensions, &sshClient.Options)
+	if !controlConnection && options.OpenSSH.ControlCommand != "exit" {
+		updateRequestExtensions(&vaultClient.Options.Extensions, &sshClient.Extensions)
 
-		signedKey, err := vaultClient.GetSignedKey(sshClient.Options.LoginName)
+		signedKey, err := vaultClient.GetSignedKey(sshClient.User)
 		if err != nil {
 			log.Fatal("[ERROR] failed to get signed key: ", err)
 		}
@@ -78,7 +87,7 @@ func main() {
 			log.Fatal("[ERROR] invalid certificate: ", err)
 		}
 
-		signedKeyFile, err := sshClient.WriteSignedKeyFile(
+		certificateFile, err := sshClient.WriteCertificateFile(
 			filepath.Dir(vaultClient.Options.PublicKey),
 			fmt.Sprintf("signed_%s@*", filepath.Base(vaultClient.Options.PublicKey)),
 		)
@@ -87,18 +96,24 @@ func main() {
 		}
 
 		// ensure the signedKeyFile is deleted if we're killed
-		setupExitHandler(signedKeyFile)
-		defer os.Remove(signedKeyFile)
+		setupExitHandler(certificateFile)
+		defer os.Remove(certificateFile)
 
-		sshClient.PrependArgs([]string{"-o", fmt.Sprintf("CertificateFile=%s", signedKeyFile)})
+		sshClient.PrependArgs([]string{"-o", fmt.Sprintf("CertificateFile=%s", certificateFile)})
 		// sshClient.PrependArgs([]string{"-i", signedKeyFile})
 	}
 
 	log.Printf("[DEBUG] %v %v\n", sshClient.Args, controlConnection)
 
-	if err := sshClient.Connect(); err != nil {
-		log.Fatal("failed to connect: ", err)
+	if err := sshClient.Connect(controlConnection); err != nil {
+		if exitError, ok := err.(*exec.ExitError); ok {
+			return exitError.ExitCode()
+		} else {
+			return 999
+		}
 	}
+
+	return 0
 }
 
 func setupExitHandler(fn string) {
@@ -111,42 +126,31 @@ func setupExitHandler(fn string) {
 	}()
 }
 
-func getDefaultUser(vaultClient *signer.Client, sshClient *openssh.Client) string {
-	var loginName string
-
+func overrideUser(vaultClient *signer.Client, sshClient *openssh.Client) bool {
 	// if the role only allows a single, fixed user, use it
-	allowedUser := vaultClient.GetAllowedUser()
-	if allowedUser != "" {
-		loginName = allowedUser
-		sshClient.PrependArgs([]string{"-l", allowedUser})
+	if user := vaultClient.GetAllowedUser(); user != "" {
+		sshClient.User = user
+		sshClient.PrependArgs([]string{"-l", user})
+		return true
 	}
 
-	if loginName == "" {
-		currentUser, _ := user.Current()
-		loginName = currentUser.Username
-	}
-
-	return loginName
+	return false
 }
 
-func updateRequestExtensions(requestExtensions *signer.Extensions, sshOptions *openssh.Options) {
-	if !requestExtensions.AgentForwarding && sshOptions.ForwardAgent {
-		requestExtensions.AgentForwarding = true
-	} else if requestExtensions.AgentForwarding && sshOptions.NoForwardAgent {
-		requestExtensions.AgentForwarding = false
+func updateRequestExtensions(reqExt *signer.Extensions, sshExt *openssh.Extensions) {
+	if !reqExt.AgentForwarding && sshExt.AgentForwarding {
+		reqExt.AgentForwarding = true
 	}
 
-	if !requestExtensions.PortForwarding &&
-		(sshOptions.ProxyJump != "" || sshOptions.DynamicForward != nil || sshOptions.LocalForward != nil || sshOptions.RemoteForward != nil) {
-		requestExtensions.PortForwarding = true
+	if !reqExt.NoPTY && sshExt.NoPTY {
+		reqExt.NoPTY = true
 	}
 
-	if !requestExtensions.NoPTY &&
-		(sshOptions.NoPTY || (sshOptions.ForcePTY == nil && len(sshOptions.Positional.RemoteCommand) > 0)) {
-		requestExtensions.NoPTY = true
+	if !reqExt.PortForwarding && sshExt.PortForwarding {
+		reqExt.PortForwarding = true
 	}
 
-	if !requestExtensions.X11Forwarding && sshOptions.ForwardX11 {
-		requestExtensions.X11Forwarding = true
+	if !reqExt.X11Forwarding && sshExt.X11Forwarding {
+		reqExt.X11Forwarding = true
 	}
 }
