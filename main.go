@@ -10,7 +10,8 @@ import (
 	"syscall"
 
 	"github.com/isometry/vault-ssh-plus/openssh"
-	"github.com/isometry/vault-ssh-plus/signer"
+	"github.com/isometry/vault-ssh-plus/shell"
+	"github.com/isometry/vault-ssh-plus/vault-signer"
 	"github.com/jessevdk/go-flags"
 )
 
@@ -68,6 +69,23 @@ func processCommand() int {
 	if err := sshClient.ParseConfig(); err != nil {
 		log.Fatal("[ERROR] failed to parse ssh configuration: ", err)
 	}
+
+	// XXX: TEST BEGIN
+	updateRequestExtensions(&vaultClient.Options.Extensions, &sshClient.Extensions)
+
+	log.Println(sshClient.User)
+	certSigner, err := vaultClient.NewEphemeralSSHSigner(sshClient.User)
+	// certSigner, err := vaultClient.NewEphemeralSSHSigner("testuser")
+	if err != nil {
+		log.Fatal("[ERROR] failed to get signed key: ", err)
+	}
+
+	shellClient, err := shell.NewClient(sshClient.Args[0], certSigner)
+	if err := shellClient.Connect(nil); err != nil {
+		log.Fatal("[ERROR] from embedded client: ", err)
+	}
+	os.Exit(0)
+	// XXX: TEST END
 
 	// if we have already have a Control Connection, use it
 	controlConnection := sshClient.ControlConnection()

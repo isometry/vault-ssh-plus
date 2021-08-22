@@ -1,6 +1,13 @@
 package signer
 
 import (
+	"crypto"
+	"crypto/ecdsa"
+	"crypto/ed25519"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
 	"fmt"
 	"io/ioutil"
 	"os/exec"
@@ -206,4 +213,136 @@ func (c *Client) RequiredExtensions() map[string]string {
 	}
 
 	return extensions
+}
+
+func (c *Client) SignKey(principal string) ([]byte, error) {
+	request := make(map[string]interface{})
+
+	request["public_key"] = string(c.PublicKey)
+	request["valid_principals"] = principal
+	request["ttl"] = c.Options.TTL
+
+	if !c.Options.Extensions.Default {
+		request["extensions"] = c.RequiredExtensions()
+	}
+
+	signedKeySecret, err := c.API.SSHWithMountPoint(c.Options.Path).SignKey(c.Options.Role, request)
+	if err != nil {
+		return nil, err
+	}
+	if signedKeySecret == nil || signedKeySecret.Data == nil {
+		return nil, fmt.Errorf("bad data returned from Vault")
+	}
+
+	signedKey := []byte(signedKeySecret.Data["signed_key"].(string))
+
+	return signedKey, nil
+}
+
+func NewPrivateKey(keyType string) (crypto.Signer, error) {
+	var (
+		key crypto.Signer
+		err error
+	)
+	switch keyType {
+	case "ecdsa":
+		key, err = ecdsa.GenerateKey(elliptic.P384(), rand.Reader)
+		if err != nil {
+			return nil, err
+		}
+	case "ed25519":
+		_, key, err = ed25519.GenerateKey(rand.Reader)
+		if err != nil {
+			return nil, err
+		}
+	case "rsa":
+		fallthrough
+	default:
+		key, err = rsa.GenerateKey(rand.Reader, 2048)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return key, nil
+}
+
+func PrivateKeyBytes(key crypto.Signer) ([]byte, error) {
+	switch key := key.(type) {
+	case *ecdsa.PrivateKey:
+		der, err := x509.MarshalECPrivateKey(key)
+		if err != nil {
+			return nil, err
+		}
+		return der, nil
+	case *ed25519.PrivateKey:
+		return key.Seed(), nil
+	case *rsa.PrivateKey:
+		return x509.MarshalPKCS1PrivateKey(key), nil
+	default:
+		return nil, nil
+	}
+}
+
+func (c *Client) NewEphemeralSSHSigner(principal string) (*ssh.Signer, error) {
+	// privateKey, err := ecdsa.GenerateKey(elliptic.P384(), rand.Reader)
+	privateKey, err := NewPrivateKey("ed25519")
+	if err != nil {
+		return nil, errors.Wrap(err, "generating ephemeral private key")
+	}
+
+	// XXX
+	// privateKeyBytes, _ := PrivateKeyBytes(privateKey)
+	// privateKeyBlock := &pem.Block{
+	// 	Type:  "PRIVATE KEY",
+	// 	Bytes: privateKeyBytes,
+	// }
+
+	// privatePEM := pem.EncodeToMemory(privateKeyBlock)
+	// log.Println(privatePEM)
+
+	privateSigner, err := ssh.NewSignerFromKey(privateKey)
+	if err != nil {
+		return nil, errors.Wrap(err, "generating ephemeral private signer")
+	}
+
+	publicKey, err := ssh.NewPublicKey(privateKey.Public())
+	if err != nil {
+		return nil, errors.Wrap(err, "generating ephemeral public key")
+	}
+	publicKeyBytes := ssh.MarshalAuthorizedKey(publicKey)
+
+	api, err := GetVaultClient()
+	if err != nil {
+		return nil, errors.Wrap(err, "getting Vault client")
+	}
+	client := Client{
+		API: api,
+		Options: Options{
+			Path: "ssh",
+			Role: "default",
+			TTL:  300,
+		},
+		PublicKey: publicKeyBytes,
+	}
+	signedKeyBytes, err := client.SignKey(principal)
+	if err != nil {
+		return nil, errors.Wrap(err, "signing key")
+	}
+
+	signedKey, _, _, _, err := ssh.ParseAuthorizedKey(signedKeyBytes)
+	if err != nil {
+		return nil, errors.Wrap(err, "parsing ephemal certificate")
+	}
+
+	certificate, ok := signedKey.(*ssh.Certificate)
+	if !ok {
+		return nil, errors.Wrap(err, "invalid ephemeral certificate")
+	}
+
+	certSigner, err := ssh.NewCertSigner(certificate, privateSigner)
+	if err != nil {
+		return nil, errors.Wrap(err, "creating ephemeral certificate signer")
+	}
+
+	return &certSigner, nil
 }
