@@ -2,12 +2,13 @@ package main
 
 import (
 	"fmt"
-	"log"
 	"os"
 	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"syscall"
+
+	log "github.com/sirupsen/logrus"
 
 	"github.com/isometry/vault-ssh-plus/openssh"
 	"github.com/isometry/vault-ssh-plus/signer"
@@ -42,6 +43,15 @@ func init() {
 			os.Exit(1)
 		}
 	}
+
+	log.SetFormatter(&log.TextFormatter{
+		DisableLevelTruncation: true,
+		// DisableTimestamp:       true,
+		PadLevelText: false,
+	})
+	if len(options.OpenSSH.Verbose) > 0 {
+		log.SetLevel(log.DebugLevel)
+	}
 }
 
 func main() {
@@ -57,34 +67,31 @@ func processCommand() int {
 
 	sshClient.Args, err = signer.ParseArgs(&vaultClient, os.Args[1:])
 	if err != nil {
-		log.Fatal("[ERROR] ", err)
+		log.Fatal(err)
 	}
 
 	userOverridden := overrideUser(&vaultClient, &sshClient)
 	if userOverridden {
-		log.Println("[INFO] remote user overridden by vault role")
+		log.Info("remote user overridden by vault role")
 	}
 
 	if err := sshClient.ParseConfig(); err != nil {
-		log.Fatal("[ERROR] failed to parse ssh configuration: ", err)
+		log.Fatal("failed to parse ssh configuration: ", err)
 	}
 
 	// if we have already have a Control Connection, use it
 	controlConnection := sshClient.ControlConnection()
-	if controlConnection {
-		log.Println("[INFO] existing control connection detected")
-	}
 
 	if !controlConnection && options.OpenSSH.ControlCommand != "exit" {
 		updateRequestExtensions(&vaultClient.Options.Extensions, &sshClient.Extensions)
 
 		signedKey, err := vaultClient.GetSignedKey(sshClient.User)
 		if err != nil {
-			log.Fatal("[ERROR] failed to get signed key: ", err)
+			log.Fatal("failed to get signed key: ", err)
 		}
 
 		if err := sshClient.SetSignedKey(signedKey); err != nil {
-			log.Fatal("[ERROR] invalid certificate: ", err)
+			log.Fatal("invalid certificate: ", err)
 		}
 
 		certificateFile, err := sshClient.WriteCertificateFile(
@@ -92,7 +99,7 @@ func processCommand() int {
 			fmt.Sprintf("signed_%s@*", filepath.Base(vaultClient.Options.PublicKey)),
 		)
 		if err != nil {
-			log.Fatal("[ERROR] failed to write signed key to file: ", err)
+			log.Fatal("failed to write signed key to file: ", err)
 		}
 
 		// ensure the signedKeyFile is deleted if we're killed
@@ -103,7 +110,10 @@ func processCommand() int {
 		// sshClient.PrependArgs([]string{"-i", signedKeyFile})
 	}
 
-	log.Printf("[DEBUG] %v %v\n", sshClient.Args, controlConnection)
+	log.WithFields(log.Fields{
+		"ssh-args":                 sshClient.Args,
+		"reuse-control-connection": controlConnection,
+	}).Debug()
 
 	if err := sshClient.Connect(controlConnection); err != nil {
 		if exitError, ok := err.(*exec.ExitError); ok {
