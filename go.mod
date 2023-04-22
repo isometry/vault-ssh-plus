@@ -3,7 +3,7 @@ module github.com/isometry/vault-ssh-plus
 go 1.19
 
 require (
-	github.com/hashicorp/vault/api v1.9.0
+	github.com/hashicorp/vault/api v1.9.1
 	github.com/jessevdk/go-flags v1.5.0
 	github.com/pkg/errors v0.9.1
 	github.com/sirupsen/logrus v1.9.0
