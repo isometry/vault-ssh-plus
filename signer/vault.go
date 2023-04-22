@@ -25,7 +25,7 @@ type Client struct {
 // Options define signer-specific flags
 type Options struct {
 	Path       string     `long:"path" default:"ssh" env:"VAULT_SSH_PATH" description:"Vault SSH Path"`
-	Role       string     `long:"role" default:"default" env:"VAULT_SSH_ROLE" description:"Vault SSH Role"`
+	Role       string     `long:"role" env:"VAULT_SSH_ROLE" description:"Vault SSH Role (default: <ssh-username>)"`
 	TTL        uint       `long:"ttl" default:"300" env:"VAULT_SSH_TTL" description:"Vault SSH Certificate TTL"`
 	PublicKey  string     `short:"P" long:"public-key" default:"~/.ssh/id_rsa.pub" env:"VAULT_SSH_PUBLIC_KEY" description:"OpenSSH Public RSA Key to sign"`
 	Extensions Extensions `group:"Certificate Extensions"`
