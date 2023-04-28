@@ -70,13 +70,18 @@ func processCommand() int {
 		log.Fatal(err)
 	}
 
-	userOverridden := overrideUser(&vaultClient, &sshClient)
-	if userOverridden {
-		log.Info("remote user overridden by vault role")
-	}
-
 	if err := sshClient.ParseConfig(); err != nil {
 		log.Fatal("failed to parse ssh configuration: ", err)
+	}
+
+	roleDefaulted := defaultRoleToUser(&vaultClient, &sshClient)
+	if roleDefaulted {
+		log.Infof("defaulted vault role to ssh username: %s", sshClient.User)
+	}
+
+	userOverridden := overrideUser(&vaultClient, &sshClient)
+	if userOverridden {
+		log.Infof("ssh username overridden by vault role: %s", sshClient.User)
 	}
 
 	// if we have already have a Control Connection, use it
@@ -136,14 +141,22 @@ func setupExitHandler(fn string) {
 	}()
 }
 
+func defaultRoleToUser(vaultClient *signer.Client, sshClient *openssh.Client) bool {
+	// if role hasn't been set already, default to resolved SSH username
+	if vaultClient.Options.Role == "" {
+		vaultClient.Options.Role = sshClient.User
+		return true
+	}
+	return false
+}
+
 func overrideUser(vaultClient *signer.Client, sshClient *openssh.Client) bool {
 	// if the role only allows a single, fixed user, use it
-	if user := vaultClient.GetAllowedUser(); user != "" {
+	if user := vaultClient.GetAllowedUser(); user != "" && sshClient.User != user {
 		sshClient.User = user
 		sshClient.PrependArgs([]string{"-l", user})
 		return true
 	}
-
 	return false
 }
 
