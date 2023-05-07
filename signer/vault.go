@@ -8,7 +8,10 @@ import (
 	"path/filepath"
 	"strings"
 
+	log "github.com/sirupsen/logrus"
+
 	"github.com/hashicorp/vault/api"
+	"github.com/isometry/vault-ssh-plus/agent"
 	"github.com/jessevdk/go-flags"
 	"github.com/pkg/errors"
 	"golang.org/x/crypto/ssh"
@@ -24,10 +27,13 @@ type Client struct {
 
 // Options define signer-specific flags
 type Options struct {
-	Path       string     `long:"path" default:"ssh" env:"VAULT_SSH_PATH" description:"Vault SSH Path"`
-	Role       string     `long:"role" env:"VAULT_SSH_ROLE" description:"Vault SSH Role (default: <ssh-username>)"`
-	TTL        uint       `long:"ttl" default:"300" env:"VAULT_SSH_TTL" description:"Vault SSH Certificate TTL"`
-	PublicKey  string     `short:"P" long:"public-key" default:"~/.ssh/id_rsa.pub" env:"VAULT_SSH_PUBLIC_KEY" description:"OpenSSH Public RSA Key to sign"`
+	Mode       string     `long:"mode" choice:"sign" choice:"issue" default:"issue" env:"VAULT_SSH_MODE" description:"Mode"`
+	Type       string     `long:"type" choice:"rsa" choice:"ec" choice:"ed25519" default:"ed25519" env:"VAULT_SSH_KEY_TYPE" description:"Preferred key type"`
+	Bits       uint       `long:"bits" choice:"0" choice:"2048" choice:"3072" choice:"4096" choice:"256" choice:"384" choice:"521" default:"0" env:"VAULT_SSH_KEY_BITS" description:"Key bits for 'issue' mode"`
+	Path       string     `long:"path" default:"ssh" env:"VAULT_SSH_PATH" description:"Vault SSH mountpoint"`
+	Role       string     `long:"role" env:"VAULT_SSH_ROLE" description:"Vault SSH role (default: <ssh-username>)"`
+	TTL        uint       `long:"ttl" default:"300" env:"VAULT_SSH_TTL" description:"Vault SSH certificate TTL"`
+	PublicKey  string     `short:"P" long:"public-key" env:"VAULT_SSH_PUBLIC_KEY" description:"Path to preferred public key for 'sign' mode"`
 	Extensions Extensions `group:"Certificate Extensions"`
 }
 
@@ -41,26 +47,43 @@ type Extensions struct {
 	X11Forwarding   bool `long:"x11-forwarding" env:"VAULT_SSH_X11_FORWARDING" description:"Force permit-X11-forwarding extension"`
 }
 
-func ParseArgs(client *Client, args []string) ([]string, error) {
+func ParseArgs(client *Client, args []string) (unparsedArgs []string, err error) {
 	var options Options
 
 	parser := flags.NewParser(&options, flags.PassDoubleDash|flags.IgnoreUnknown)
-	unparsedArgs, err := parser.ParseArgs(args)
+	unparsedArgs, err = parser.ParseArgs(args)
 	if err != nil {
 		return nil, errors.Wrap(err, "parsing arguments")
 	}
 
-	if strings.HasPrefix(options.PublicKey, "~/") {
-		currentUser, _ := user.Current()
-		if err != nil {
-			return nil, errors.Wrap(err, "getting current user")
+	if options.Mode == "sign" {
+		if strings.HasPrefix(options.PublicKey, "~/") {
+			currentUser, _ := user.Current()
+			if err != nil {
+				return nil, errors.Wrap(err, "getting current user")
+			}
+
+			options.PublicKey = filepath.Join(currentUser.HomeDir, options.PublicKey[2:])
 		}
 
-		options.PublicKey = filepath.Join(currentUser.HomeDir, options.PublicKey[2:])
-	}
+		var publicKey []byte
+		if options.PublicKey != "" {
+			log.Debug("public key option set, reading file")
+			publicKey, err = ioutil.ReadFile(options.PublicKey)
+			if err != nil {
+				return nil, errors.Wrap(err, "reading public key file")
+			}
+		} else {
+			log.Debug("public key option NOT set, reading agent")
+			publicKey, err = agent.GetBestPublicKey(options.Type)
+			if err != nil {
+				return nil, errors.Wrap(err, "finding agent key")
+			}
+		}
 
-	if err = client.SetPublicKey(options.PublicKey); err != nil {
-		return nil, errors.Wrap(err, "setting public key")
+		if err := client.SetPublicKey(publicKey); err != nil {
+			return nil, errors.Wrap(err, "setting public key")
+		}
 	}
 
 	client.API, err = GetVaultClient()
@@ -73,13 +96,11 @@ func ParseArgs(client *Client, args []string) ([]string, error) {
 	return unparsedArgs, nil
 }
 
-func (c *Client) SetPublicKey(fn string) error {
-	var err error
-
-	publicKey, err := ioutil.ReadFile(fn)
-	if err != nil {
-		return errors.Wrap(err, "reading public key")
-	}
+func (c *Client) SetPublicKey(publicKey []byte) (err error) {
+	// publicKey, err := ioutil.ReadFile(fn)
+	// if err != nil {
+	// 	return errors.Wrap(err, "reading public key")
+	// }
 
 	_, _, _, _, err = ssh.ParseAuthorizedKey(publicKey)
 	if err != nil {
@@ -159,8 +180,8 @@ func (c *Client) GetAllowedUser() string {
 	return allowedUsers[0]
 }
 
-// GetSignedKey signs the configured public key, sets the SignedKey property to the filename of the signed key and returns the filename
-func (c *Client) GetSignedKey(principal string) (string, error) {
+// SignKey signs the configured public key, sets the SignedKey property to the filename of the signed key and returns the filename
+func (c *Client) SignKey(principal string) (string, error) {
 	request := make(map[string]interface{})
 
 	request["public_key"] = string(c.PublicKey)
@@ -179,6 +200,31 @@ func (c *Client) GetSignedKey(principal string) (string, error) {
 	c.SignedKey = signedKeySecret.Data["signed_key"].(string)
 
 	return c.SignedKey, nil
+}
+
+// GenerateSignedKeypair gets a (private, signed) key-pair
+func (c *Client) GenerateSignedKeypair(principal string) (privateKey string, signedKey string, err error) {
+	request := make(map[string]interface{})
+
+	request["cert_type"] = "user"
+	request["key_type"] = c.Options.Type
+	request["key_bits"] = c.Options.Bits
+	request["valid_principals"] = principal
+	request["ttl"] = c.Options.TTL
+
+	if !c.Options.Extensions.Default {
+		request["extensions"] = c.RequiredExtensions()
+	}
+
+	secret, err := c.API.Logical().Write(fmt.Sprintf("%s/issue/%s", c.Options.Path, c.Options.Role), request)
+	if err != nil {
+		return
+	}
+
+	privateKey = secret.Data["private_key"].(string)
+	signedKey = secret.Data["signed_key"].(string)
+
+	return
 }
 
 // RequiredExtensions calculates the required set of extensions to request based on the options set on Client

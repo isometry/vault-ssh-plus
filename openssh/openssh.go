@@ -3,12 +3,12 @@ package openssh
 import (
 	"bufio"
 	"bytes"
-	"io/ioutil"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"syscall"
+
+	log "github.com/sirupsen/logrus"
 
 	"github.com/pkg/errors"
 	"golang.org/x/crypto/ssh"
@@ -155,38 +155,29 @@ func (c *Client) PrependArgs(args []string) {
 }
 
 // SetSignedKey sets Client.SignedKey
-func (c *Client) SetSignedKey(key string) error {
-	var err error
-
+func (c *Client) SetSignedKey(key string) (err error) {
 	c.CertificateString = key
 	c.CertificateObject, err = ParseSignedKey(key)
 
-	return err
+	return
 }
 
-// WriteCertificateFile updates the certificate file at path/name
-func (c *Client) WriteCertificateFile(path, name string) (string, error) {
-	if strings.Contains(name, "*") {
-		signedKeyFile, err := ioutil.TempFile(path, name)
-		if err != nil {
-			return "", errors.Wrap(err, "creating temporary certificate file")
-		}
-		if _, err := signedKeyFile.Write([]byte(c.CertificateString)); err != nil {
-			return "", errors.Wrap(err, "writing certificate to temporary file")
-		}
-
-		if err := signedKeyFile.Close(); err != nil {
-			return "", errors.Wrap(err, "closing temporary certificate file")
-		}
-
-		return signedKeyFile.Name(), nil
-	} else {
-		signedKeyFileName := filepath.Join(path, name)
-		if err := ioutil.WriteFile(signedKeyFileName, []byte(c.CertificateString), 0600); err != nil {
-			return "", errors.Wrap(err, "writing certificate to file")
-		}
-		return signedKeyFileName, nil
+// WriteCertificateFile writes an ephemeral certificate file to disk
+func (c *Client) WriteCertificateFile() (string, error) {
+	signedKeyFile, err := os.CreateTemp("", "vssh-cert.*")
+	if err != nil {
+		return "", errors.Wrap(err, "creating temporary certificate file")
 	}
+	if _, err := signedKeyFile.Write([]byte(c.CertificateString)); err != nil {
+		return "", errors.Wrap(err, "writing certificate to temporary file")
+	}
+
+	if err := signedKeyFile.Close(); err != nil {
+		return "", errors.Wrap(err, "closing temporary certificate file")
+	}
+	log.Debugf("certificate file written to %q", signedKeyFile.Name())
+
+	return signedKeyFile.Name(), nil
 }
 
 // Connect establishes the ssh client connection

@@ -18,7 +18,6 @@ An enhanced implementation of [`vault ssh`](https://www.vaultproject.io/docs/com
 * A [HashiCorp Vault](https://www.vaultproject.io/) instance configured for [SSH Client Key Signing](https://www.vaultproject.io/docs/secrets/ssh/signed-ssh-certificates.html#client-key-signing), access to an appropriate role, and an SSH server configured to trust the Vault CA.
 * An active Vault token (either in the `VAULT_TOKEN` environment variable, or – if the standard `vault` binary is available within `$PATH` – available from a Vault Token Helper). The `VAULT_ADDR` environment variable must also be set.
 * OpenSSH 7.2 or newer `ssh` client binary.
-* A standard SSH private key (stored anywhere supported by `ssh`), and the associated *unsigned* public key (default: `~/.ssh/id_rsa.pub`). `vssh` does *not* require access to the private key.
 
 ## Usage
 
@@ -30,42 +29,57 @@ Usage:
   vssh [options] destination [command]
 
 Application Options:
-      --version                           Show version
-
-Vault SSH key signing Options:
-      --path=                             Vault SSH Path (default: ssh) [$VAULT_SSH_PATH]
-      --role=                             Vault SSH Role (default: default) [$VAULT_SSH_ROLE]
-      --ttl=                              Vault SSH Certificate TTL (default: 300) [$VAULT_SSH_TTL]
-  -P, --public-key=                       OpenSSH Public RSA Key to sign (default: ~/.ssh/id_rsa.pub) [$VAULT_SSH_PUBLIC_KEY]
+      --mode=[sign|issue]                   Mode (default: issue) [$VAULT_SSH_MODE]
+      --type=[rsa|ec|ed25519]               Preferred key type (default: ed25519) [$VAULT_SSH_KEY_TYPE]
+      --bits=[0|2048|3072|4096|256|384|521] Key bits for 'issue' mode (default: 0) [$VAULT_SSH_KEY_BITS]
+      --path=                               Vault SSH mountpoint (default: ssh) [$VAULT_SSH_PATH]
+      --role=                               Vault SSH role (default: <ssh-username>) [$VAULT_SSH_ROLE]
+      --ttl=                                Vault SSH certificate TTL (default: 300) [$VAULT_SSH_TTL]
+  -P, --public-key=                         Path to preferred public key for 'sign' mode [$VAULT_SSH_PUBLIC_KEY]
+      --version                             Show version
 
 Certificate Extensions:
-      --default-extensions                Disable automatic extension calculation and request signer-default extensions [$VAULT_SSH_DEFAULT_EXTENSIONS]
-      --agent-forwarding                  Force permit-agent-forwarding extension [$VAULT_SSH_AGENT_FORWARDING]
-      --port-forwarding                   Force permit-port-forwarding extension [$VAULT_SSH_PORT_FORWARDING]
-      --no-pty                            Force disable permit-pty extension [$VAULT_SSH_NO_PTY]
-      --user-rc                           Enable permit-user-rc extension [$VAULT_SSH_USER_RC]
-      --x11-forwarding                    Force permit-X11-forwarding extension [$VAULT_SSH_X11_FORWARDING]
+      --default-extensions                  Disable automatic extension calculation and request signer-default extensions [$VAULT_SSH_DEFAULT_EXTENSIONS]
+      --agent-forwarding                    Force permit-agent-forwarding extension [$VAULT_SSH_AGENT_FORWARDING]
+      --port-forwarding                     Force permit-port-forwarding extension [$VAULT_SSH_PORT_FORWARDING]
+      --no-pty                              Force disable permit-pty extension [$VAULT_SSH_NO_PTY]
+      --user-rc                             Enable permit-user-rc extension [$VAULT_SSH_USER_RC]
+      --x11-forwarding                      Force permit-X11-forwarding extension [$VAULT_SSH_X11_FORWARDING]
 
 Help Options:
-  -h, --help                              Show this help message
+  -h, --help                                Show this help message
 ```
 
 If you need to override the [SSH Client Key Signing](https://www.vaultproject.io/docs/secrets/ssh/signed-ssh-certificates.html#client-key-signing) mountpoint or role, this is most easily achieved by setting the `VAULT_SSH_PATH` and `VAULT_SSH_ROLE` environment variables in your shell rc.
+If your Vault SSH mountpoint isn't configured with a role matching the target SSH username, you *will* need to specify the Vault SSH role to use (e.g. `export VAULT_SSH_ROLE=self` or `vssh --role=self host` if you're using a role named `self` configured with templated `allowed_users`).
 
-Similarly, if you prefer an `ed25519` or `ecdsa` key, override with `VAULT_SSH_PUBLIC_KEY`.
+In `issue` mode (the default), the client will retrieve an ephemeral keypair from Vault, exposed to `ssh(1)` via an internal SSH agent.
 
-By default, the certificate will be requested with only those extensions required for the current command (default `permit-pty` unless `-N` is specified). Additional extensions may be requested (e.g. to support expected future multiplexed connections) with the "Certificate Extensions" arguments, or the Vault role default extensions may be forced with `--default-extensions`.
+In `sign` mode, the client will sign the public key specified, defaulting to the first key added into `ssh-agent(1)` (preferring the first of type matching `VAULT_SSH_KEY_TYPE`).
 
-### Example
+The certificate will be requested with only those extensions required for the current command (default `permit-pty` unless `-N` is specified). Additional extensions may be requested (e.g. to support expected future multiplexed connections) with the "Certificate Extensions" arguments, or the Vault role default extensions may be forced with `--default-extensions`.
 
-The following will request that the ed25519 public key be signed by the Vault signed at `https://vault.example.com:8200/v1/ssh/sign/ssh-client-signer`, with `permit-pty` and `permit-port-forwarding` extensions to support the connection to `host.example.com`
+### Examples
+
+The following will request that an existing ed25519 public key be signed by the Vault signer at `https://vault.example.com:8200/v1/ssh-client-signer/sign/default`, with `permit-pty` and `permit-port-forwarding` extensions to support the connection to `host.example.com`:
 
 ```console
-$ export VAULT_ADDR=https://vault.example.com:8200 VAULT_SSH_PATH=ssh-client-signer VAULT_SSH_PUBLIC_KEY=~/.ssh/id_ed25519.pub
-$ vault login -method=oidc
+$ ssh-add ~/.ssh/id_ed25519
+$ export VAULT_ADDR=https://vault.example.com:8200 VAULT_SSH_PATH=ssh-client-signer VAULT_SSH_MODE=sign
+$ vault login
 ...
 $ vssh -L8080:localhost:80 host.example.com
 ...
+```
+
+The following will request that an ephemeral ecdsa keypair with a 521-bit private key be generated by the Vault issuer at `https://vault.example.com/v1/ssh/issue/root`, and used to run the `id` command on `host2.example.com` as `root`:
+
+```console
+$ export VAULT_ADDR=https://vault.example.com VAULT_SSH_KEY_TYPE=ec
+$ vault login
+...
+$ vssh root@host2.example.com id
+uid=0(root) gid=0(wheel) groups=0(wheel),5(operator)
 ```
 
 ## Installation
