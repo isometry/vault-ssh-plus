@@ -88,6 +88,11 @@ If you've already installed my [release-from-github](https://github.com/isometry
 ansible -m import_role -a name=release-from-github -e release_repo=isometry/vault-ssh-plus -e release_hashicorp_style=yes localhost
 ```
 
+### Arch Linux
+
+vault-ssh-plus has been added to the AUR repository, and can be found at `https://aur.archlinux.org/packages/vault-ssh-plus-bin`. 
+Either install via makepkg, or your favourite AUR helper.
+
 ## Troubleshooting
 
 Refer to the [Vault Documentation](https://www.vaultproject.io/docs/secrets/ssh/signed-ssh-certificates.html#troubleshooting)
