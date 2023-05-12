@@ -9,24 +9,30 @@ import (
 
 	log "github.com/sirupsen/logrus"
 
+	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
 	"golang.org/x/exp/slices"
 )
 
-var sshKeyTypeMap = map[string]string{
-	"rsa":     "ssh-rsa",
-	"ec":      "ssh-ecdsa",
-	"ed25519": "ssh-ed25519",
+var sshKeyTypeMap = map[string][]string{
+	"rsa":     {ssh.KeyAlgoRSA},
+	"ec":      {ssh.KeyAlgoECDSA256, ssh.KeyAlgoSKECDSA256, ssh.KeyAlgoECDSA384, ssh.KeyAlgoECDSA521},
+	"ed25519": {ssh.KeyAlgoED25519, ssh.KeyAlgoSKED25519},
+	"sk":      {ssh.KeyAlgoSKECDSA256, ssh.KeyAlgoSKED25519},
 }
 
 var supportedKeyTypes = []string{
-	"ssh-rsa",
-	"ssh-ecdsa",
-	"ssh-ed25519",
+	ssh.KeyAlgoRSA,
+	ssh.KeyAlgoECDSA256,
+	ssh.KeyAlgoSKECDSA256,
+	ssh.KeyAlgoECDSA384,
+	ssh.KeyAlgoECDSA521,
+	ssh.KeyAlgoED25519,
+	ssh.KeyAlgoSKED25519,
 }
 
 func GetBestPublicKey(preferredType string) (publicKey []byte, err error) {
-	prefKeyType, ok := sshKeyTypeMap[preferredType]
+	prefKeyTypes, ok := sshKeyTypeMap[preferredType]
 	if !ok {
 		return nil, fmt.Errorf("invalid key type: %q", preferredType)
 	}
@@ -58,7 +64,7 @@ func GetBestPublicKey(preferredType string) (publicKey []byte, err error) {
 		if bestKey == nil && slices.Contains(supportedKeyTypes, keyType) {
 			bestKey = key
 		}
-		if keyType == prefKeyType {
+		if slices.Contains(prefKeyTypes, keyType) {
 			bestKey = key
 			break
 		}
@@ -66,7 +72,7 @@ func GetBestPublicKey(preferredType string) (publicKey []byte, err error) {
 	if bestKey == nil {
 		return nil, errors.New("no viable key found in external agent")
 	}
-	if bestKey.Type() != prefKeyType {
+	if !slices.Contains(prefKeyTypes, bestKey.Type()) {
 		log.Infof("no key of type %q found, falling back to first key of type %q", preferredType, bestKey.Type())
 	}
 

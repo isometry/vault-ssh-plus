@@ -28,7 +28,7 @@ type Client struct {
 // Options define signer-specific flags
 type Options struct {
 	Mode       string     `long:"mode" choice:"sign" choice:"issue" default:"issue" env:"VAULT_SSH_MODE" description:"Mode"`
-	Type       string     `long:"type" choice:"rsa" choice:"ec" choice:"ed25519" default:"ed25519" env:"VAULT_SSH_KEY_TYPE" description:"Preferred key type"`
+	Type       string     `long:"type" choice:"rsa" choice:"ec" choice:"ed25519" choice:"sk" default:"ed25519" env:"VAULT_SSH_KEY_TYPE" description:"Key type or preference for 'sign' mode"`
 	Bits       uint       `long:"bits" choice:"0" choice:"2048" choice:"3072" choice:"4096" choice:"256" choice:"384" choice:"521" default:"0" env:"VAULT_SSH_KEY_BITS" description:"Key bits for 'issue' mode"`
 	Path       string     `long:"path" default:"ssh" env:"VAULT_SSH_PATH" description:"Vault SSH mountpoint"`
 	Role       string     `long:"role" env:"VAULT_SSH_ROLE" description:"Vault SSH role (default: <ssh-username>)"`
@@ -54,6 +54,15 @@ func ParseArgs(client *Client, args []string) (unparsedArgs []string, err error)
 	unparsedArgs, err = parser.ParseArgs(args)
 	if err != nil {
 		return nil, errors.Wrap(err, "parsing arguments")
+	}
+
+	// explicitly setting a public key forces sign mode
+	if options.PublicKey != "" {
+		options.Mode = "sign"
+	}
+
+	if options.Mode == "issue" && options.Type == "sk" {
+		return nil, errors.New("key type 'sk' incompatible with 'issue' mode")
 	}
 
 	if options.Mode == "sign" {

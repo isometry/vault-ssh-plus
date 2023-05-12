@@ -29,12 +29,12 @@ func NewInternalAgent() (ia *InternalAgent, err error) {
 	}
 
 	ia = &InternalAgent{
-		keyring:   agent.NewKeyring(),
-		socketDir: socketDir,
-		stop:      make(chan bool),
-		stopped:   make(chan bool),
+		keyring:    agent.NewKeyring(),
+		socketDir:  socketDir,
+		socketFile: filepath.Join(socketDir, "agent.sock"),
+		stop:       make(chan bool),
+		stopped:    make(chan bool),
 	}
-	ia.socketFile = filepath.Join(socketDir, "listener")
 
 	ia.listener, err = net.Listen("unix", ia.socketFile)
 	if err != nil {
