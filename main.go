@@ -5,11 +5,11 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
-	"path/filepath"
 	"syscall"
 
 	log "github.com/sirupsen/logrus"
 
+	"github.com/isometry/vault-ssh-plus/agent"
 	"github.com/isometry/vault-ssh-plus/openssh"
 	"github.com/isometry/vault-ssh-plus/signer"
 	"github.com/jessevdk/go-flags"
@@ -20,7 +20,7 @@ var (
 	commit  = "none"
 	date    = "unknown"
 	options struct {
-		Signer  signer.Options  `group:"Vault SSH key signing Options"`
+		Signer  signer.Options
 		OpenSSH openssh.Options `group:"OpenSSH ssh(1) Options" hidden:"yes"`
 		Version func()          `long:"version" description:"Show version"`
 	}
@@ -76,7 +76,7 @@ func processCommand() int {
 
 	roleDefaulted := defaultRoleToUser(&vaultClient, &sshClient)
 	if roleDefaulted {
-		log.Infof("defaulted vault role to ssh username: %s", sshClient.User)
+		log.Debugf("defaulted vault role to ssh username: %s", sshClient.User)
 	}
 
 	userOverridden := overrideUser(&vaultClient, &sshClient)
@@ -90,29 +90,49 @@ func processCommand() int {
 	if !controlConnection && options.OpenSSH.ControlCommand != "exit" {
 		updateRequestExtensions(&vaultClient.Options.Extensions, &sshClient.Extensions)
 
-		signedKey, err := vaultClient.GetSignedKey(sshClient.User)
-		if err != nil {
-			log.Fatal("failed to get signed key: ", err)
+		log.Debugf("running in %q mode\n", vaultClient.Options.Mode)
+		switch vaultClient.Options.Mode {
+		case "issue":
+			agent, err := agent.NewInternalAgent()
+			if err != nil {
+				log.Fatal("failed to start internal agent: ", err)
+			}
+			defer agent.Stop()
+
+			privateKey, signedKey, err := vaultClient.GenerateSignedKeypair(sshClient.User)
+			if err != nil {
+				log.Fatal("failed to generate signed keypair: ", err)
+			}
+
+			if err := agent.AddSignedKeyPair(privateKey, signedKey); err != nil {
+				log.Fatal("failed to add keypair to internal agent: ", err)
+			}
+
+			// override default ssh-agent socket
+			os.Setenv("SSH_AUTH_SOCK", agent.SocketFile())
+			log.Debugf("set SSH_AUTH_SOCK to %q\n", agent.SocketFile())
+
+		case "sign":
+			signedKey, err := vaultClient.SignKey(sshClient.User)
+			if err != nil {
+				log.Fatal("failed to get signed key: ", err)
+			}
+
+			if err := sshClient.SetSignedKey(signedKey); err != nil {
+				log.Fatal("invalid certificate: ", err)
+			}
+
+			certificateFile, err := sshClient.WriteCertificateFile()
+			if err != nil {
+				log.Fatal("failed to write signed key to file: ", err)
+			}
+
+			// ensure the signedKeyFile is deleted if we're killed
+			setupExitHandler(certificateFile)
+			defer os.Remove(certificateFile)
+
+			sshClient.PrependArgs([]string{"-o", fmt.Sprintf("CertificateFile=%s", certificateFile)})
 		}
-
-		if err := sshClient.SetSignedKey(signedKey); err != nil {
-			log.Fatal("invalid certificate: ", err)
-		}
-
-		certificateFile, err := sshClient.WriteCertificateFile(
-			filepath.Dir(vaultClient.Options.PublicKey),
-			fmt.Sprintf("signed_%s@*", filepath.Base(vaultClient.Options.PublicKey)),
-		)
-		if err != nil {
-			log.Fatal("failed to write signed key to file: ", err)
-		}
-
-		// ensure the signedKeyFile is deleted if we're killed
-		setupExitHandler(certificateFile)
-		defer os.Remove(certificateFile)
-
-		sshClient.PrependArgs([]string{"-o", fmt.Sprintf("CertificateFile=%s", certificateFile)})
-		// sshClient.PrependArgs([]string{"-i", signedKeyFile})
 	}
 
 	log.WithFields(log.Fields{
@@ -132,8 +152,8 @@ func processCommand() int {
 }
 
 func setupExitHandler(fn string) {
-	s := make(chan os.Signal)
-	signal.Notify(s, os.Interrupt, os.Kill, syscall.SIGTERM, syscall.SIGQUIT)
+	s := make(chan os.Signal, 1)
+	signal.Notify(s, os.Interrupt, syscall.SIGTERM, syscall.SIGQUIT)
 	go func() {
 		<-s
 		_ = os.Remove(fn)
