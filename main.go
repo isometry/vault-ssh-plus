@@ -111,6 +111,7 @@ func processCommand() int {
 			// override default ssh-agent socket
 			os.Setenv("SSH_AUTH_SOCK", agent.SocketFile())
 			log.Debugf("set SSH_AUTH_SOCK to %q\n", agent.SocketFile())
+			sshClient.PrependArgs([]string{"-o", "IdentityAgent=SSH_AUTH_SOCK"})
 
 		case "sign":
 			signedKey, err := vaultClient.SignKey(sshClient.User)
