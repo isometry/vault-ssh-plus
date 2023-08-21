@@ -111,6 +111,14 @@ ansible -m import_role -a name=release-from-github -e release_repo=isometry/vaul
 vault-ssh-plus has been added to the AUR repository, and can be found at `https://aur.archlinux.org/packages/vault-ssh-plus-bin`. 
 Either install via makepkg, or your favourite AUR helper.
 
+### Nix / NixOS
+
+`vault-ssh-plus` is available in [nixpkgs](https://github.com/NixOS/nixpkgs):
+
+```sh
+nix-env -iA nixpkgs.vault-ssh-plus
+```
+
 ## Troubleshooting
 
 Refer to the [Vault Documentation](https://www.vaultproject.io/docs/secrets/ssh/signed-ssh-certificates.html#troubleshooting)
