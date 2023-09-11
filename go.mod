@@ -3,7 +3,7 @@ module github.com/isometry/vault-ssh-plus
 go 1.19
 
 require (
-	github.com/hashicorp/vault/api v1.9.2
+	github.com/hashicorp/vault/api v1.10.0
 	github.com/jessevdk/go-flags v1.5.0
 	github.com/pkg/errors v0.9.1
 	github.com/sirupsen/logrus v1.9.3
@@ -32,7 +32,6 @@ require (
 	github.com/stretchr/testify v1.7.2 // indirect
 	golang.org/x/net v0.14.0 // indirect
 	golang.org/x/sys v0.12.0 // indirect
-	golang.org/x/term v0.11.0 // indirect
 	golang.org/x/text v0.13.0 // indirect
 	golang.org/x/time v0.3.0 // indirect
 )
