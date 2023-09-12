@@ -15,14 +15,15 @@ import (
 )
 
 type Client struct {
-	Args              []string
-	HostConfig        []string
-	User              string
-	Hostname          string
-	Extensions        Extensions
-	CertificateString string
-	CertificateFile   string
-	CertificateObject *ssh.Certificate
+	Args               []string
+	HostConfig         []string
+	User               string
+	Hostname           string
+	Extensions         Extensions
+	CertificateString  string
+	CertificateFile    string
+	CertificateObject  *ssh.Certificate
+	ForceIdentityAgent bool
 }
 
 // Options for https://man.openbsd.org/ssh.1; parsed simply to provide accurate Destination and RemoteCommand
@@ -127,6 +128,8 @@ func (c *Client) ParseConfig() error {
 			if value == "yes" {
 				c.Extensions.X11Forwarding = true
 			}
+		case "identityagent":
+			c.ForceIdentityAgent = true
 		case "localforward":
 			c.Extensions.PortForwarding = true
 		case "remoteforward":
