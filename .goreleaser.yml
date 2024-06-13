@@ -1,3 +1,4 @@
+version: 2
 before:
   hooks:
     - go mod tidy
@@ -37,11 +38,11 @@ changelog:
       - "^docs:"
       - "^test:"
 brews:
-  - tap:
+  - repository:
       owner: isometry
       name: homebrew-tap
       token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
-    folder: Formula
+    directory: Formula
     description: Automatically use HashiCorp Vault SSH Client Key Signing with ssh(1)
     homepage: https://just.breathe.io/project/vault-ssh-plus/
     dependencies:
