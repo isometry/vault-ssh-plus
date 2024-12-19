@@ -45,8 +45,13 @@ brews:
     directory: Formula
     description: Automatically use HashiCorp Vault SSH Client Key Signing with ssh(1)
     homepage: https://just.breathe.io/project/vault-ssh-plus/
+    caveats: |
+      vssh requires the vault binary to be in your PATH.
+      You can install it with:
+        brew install hashicorp/tap/vault
     dependencies:
-      - name: vault
+      - name: hashicorp/tap/vault
+        type: optional
     test: |
       system "#{bin}/vssh --version"
     install: |
