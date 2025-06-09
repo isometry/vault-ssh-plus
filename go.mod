@@ -9,7 +9,7 @@ require (
 	github.com/jessevdk/go-flags v1.6.1
 	github.com/pkg/errors v0.9.1
 	github.com/sirupsen/logrus v1.9.3
-	golang.org/x/crypto v0.38.0
+	golang.org/x/crypto v0.39.0
 	golang.org/x/exp v0.0.0-20250408133849-7e4ce0ab07d0
 )
 
@@ -30,6 +30,6 @@ require (
 	github.com/ryanuber/go-glob v1.0.0 // indirect
 	golang.org/x/net v0.39.0 // indirect
 	golang.org/x/sys v0.33.0 // indirect
-	golang.org/x/text v0.25.0 // indirect
+	golang.org/x/text v0.26.0 // indirect
 	golang.org/x/time v0.11.0 // indirect
 )
