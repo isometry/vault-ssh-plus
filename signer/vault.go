@@ -2,7 +2,8 @@ package signer
 
 import (
 	"fmt"
-	"io/ioutil"
+	"os"
+
 	"os/exec"
 	"os/user"
 	"path/filepath"
@@ -19,7 +20,7 @@ import (
 
 type Client struct {
 	API        *api.Client
-	RoleConfig map[string]interface{}
+	RoleConfig map[string]any
 	Options    Options
 	PublicKey  []byte
 	SignedKey  string
@@ -78,7 +79,7 @@ func ParseArgs(client *Client, args []string) (unparsedArgs []string, err error)
 		var publicKey []byte
 		if options.PublicKey != "" {
 			log.Debug("public key option set, reading file")
-			publicKey, err = ioutil.ReadFile(options.PublicKey)
+			publicKey, err = os.ReadFile(options.PublicKey)
 			if err != nil {
 				return nil, errors.Wrap(err, "reading public key file")
 			}
@@ -156,7 +157,7 @@ func GetVaultClient() (*api.Client, error) {
 	return vaultClient, nil
 }
 
-func (c *Client) GetRoleData() map[string]interface{} {
+func (c *Client) GetRoleData() map[string]any {
 	secret, err := c.API.Logical().Read(fmt.Sprintf("%s/roles/%s", c.Options.Path, c.Options.Role))
 	if err != nil || secret == nil {
 		return nil
@@ -191,7 +192,7 @@ func (c *Client) GetAllowedUser() string {
 
 // SignKey signs the configured public key, sets the SignedKey property to the filename of the signed key and returns the filename
 func (c *Client) SignKey(principal string) (string, error) {
-	request := make(map[string]interface{})
+	request := make(map[string]any)
 
 	request["public_key"] = string(c.PublicKey)
 	request["valid_principals"] = principal
@@ -213,7 +214,7 @@ func (c *Client) SignKey(principal string) (string, error) {
 
 // GenerateSignedKeypair gets a (private, signed) key-pair
 func (c *Client) GenerateSignedKeypair(principal string) (privateKey string, signedKey string, err error) {
-	request := make(map[string]interface{})
+	request := make(map[string]any)
 
 	request["cert_type"] = "user"
 	request["key_type"] = c.Options.Type
