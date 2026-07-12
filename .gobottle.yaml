@@ -1,0 +1,15 @@
+formula:
+  description: Automatically use HashiCorp Vault SSH Client Key Signing with ssh(1)
+  homepage: https://just.breathe.io/project/vault-ssh-plus/
+  license: MIT
+  # gobottle renders dependencies as plain (required) depends_on lines;
+  # vault stays a runtime suggestion via caveats rather than a hard dependency
+  caveats: |
+    vssh requires the vault binary to be in your PATH.
+    You can install it with:
+      brew install hashicorp/tap/vault
+
+source:
+  type: local
+
+binaries: [vssh]

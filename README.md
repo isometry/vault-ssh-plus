@@ -92,9 +92,10 @@ uid=0(root) gid=0(wheel) groups=0(wheel),5(operator)
 
 Download and extract the [latest release](https://github.com/isometry/vault-ssh-plus/releases/latest).
 
-### macOS
+### Homebrew (macOS/Linux)
 
 ```sh
+brew trust isometry/tap  # required once on Homebrew ≥6
 brew install isometry/tap/vault-ssh-plus
 ```
 
